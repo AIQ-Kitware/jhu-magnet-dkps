@@ -6,11 +6,14 @@ from sklearn.linear_model import LinearRegression
 from magnet.predictor import RunPredictor, RunPrediction
 from magnet.data_splits import TrainSplit, SequesteredTestSplit
 from dkps.dkps import DataKernelPerspectiveSpace as DKPS
-from dkps.helm import compute_embeddings, make_embedding_dict, uses_onehot, DEFAULT_EMBED_PROVIDER, DEFAULT_EMBED_MODEL
+from dkps.helm import (
+    compute_embeddings, prepare_responses, make_embedding_dict, uses_onehot,
+    DEFAULT_EMBED_PROVIDER, DEFAULT_EMBED_MODEL,
+)
 
 
 class DKPSRunPredictor(RunPredictor):
-    """Predict run-level aggregate score (e.g. mean exact_match over a full benchmark)
+    """Predict run-level aggregate score (e.g. mean quasi_exact_match over a full benchmark)
     for a held-out target model using Data Kernel Perspective Space (DKPS).
 
     Flow:
@@ -29,7 +32,8 @@ class DKPSRunPredictor(RunPredictor):
         n_components_cmds: Number of CMDS components used by DKPS.
         dataset: HELM dataset name (e.g. 'med_qa', 'legalbench:subset=abercrombie').
             Controls run_spec filtering and embedding strategy.
-        metric: HELM metric name to predict (e.g. 'exact_match').
+        metric: HELM metric name to predict (e.g. 'quasi_exact_match'). The private
+            DKPS codebase scores runs with quasi_exact_match (see parsers/*.py).
         split: HELM split to target (e.g. 'valid').
         embed_provider: Embedding API provider for text-embedding datasets. Ignored for
             onehot datasets (med_qa, legalbench).
@@ -43,7 +47,7 @@ class DKPSRunPredictor(RunPredictor):
         random_seed: int = 1,
         n_components_cmds: int = 8,
         dataset: str = "med_qa",
-        metric: str = "exact_match",
+        metric: str = "quasi_exact_match",
         split: str = "valid",
         embed_provider: str | None = None,
         embed_model: str | None = None,
@@ -188,6 +192,18 @@ class DKPSRunPredictor(RunPredictor):
         # Compute embeddings and fit DKPS (onehot embeddings depend on joint vocabulary,
         # so embed train + target together).
         df_all = pd.concat([df_train_embed, df_valid_embed]).reset_index(drop=True)
+
+        # Dataset-specific response normalization (e.g. legalbench answer -> gold
+        # class mapping) lives in dkps.helm so it stays consistent with the
+        # private DKPS pipeline. Pass references unconditionally; prepare_responses
+        # ignores them for datasets that don't need them.
+        ref_col = 'scenario_state.request_states.instance.references'
+        all_references = pd.concat([
+            train_scenario_states_for_embedding[ref_col],
+            eval_scenario_state_df[ref_col],
+        ])
+        df_all = prepare_responses(df_all, self.dataset, references=all_references)
+
         df_all = compute_embeddings(df_all, self.dataset, self.embed_provider, self.embed_model)
         print(f'[DKPSRunPredictor] df_all (post-embed): {df_all.shape}; '
               f'embedding dim: {np.asarray(df_all.embedding.iloc[0]).shape}')
@@ -209,6 +225,7 @@ class DKPSRunPredictor(RunPredictor):
 
         lr = LinearRegression().fit(X_train, y_train)
         y_hat = float(lr.predict(X_valid)[0])
+        y_hat = float(np.clip(y_hat, 0.0, 1.0))  # metric bounded [0,1]; matches dkps run_dkps.py
         print(f'[DKPSRunPredictor] target={target_model_full} y_hat={y_hat:.3f}')
 
         return [RunPrediction(
@@ -229,7 +246,7 @@ if __name__ == "__main__":
     parser.add_argument('--seed', default=1, type=int)
     parser.add_argument('--n-components-cmds', default=8, type=int)
     parser.add_argument('--dataset', default='med_qa', type=str)
-    parser.add_argument('--metric', default='exact_match', type=str)
+    parser.add_argument('--metric', default='quasi_exact_match', type=str)
     parser.add_argument('--split', default='valid', type=str)
     parser.add_argument('--embed-provider', default=None, type=str)
     parser.add_argument('--embed-model', default=None, type=str)

@@ -29,7 +29,7 @@ dependencies = [
     # The [optional] flag here is used to include optional
     # dependencies in the aiq-magnet install (needed for the HELM
     # download utility)
-    "aiq-magnet[optional] @ git+https://github.com/AIQ-Kitware/aiq-magnet@a802afe",  # pinning to the `a802afe` commit
+    "aiq-magnet[optional] @ git+https://github.com/AIQ-Kitware/aiq-magnet",
     # We have a version of `aiq-magnet` hosted on PyPI and intend to
     # push semi-regular updates there once the API stabalizes.  For
     # now, pointing to the GitHub repository will be sure to get you
@@ -39,6 +39,11 @@ dependencies = [
     # Add your other Python dependencies here
     "dkps @ git+https://github.com/jataware/dkps@magnet",
     "httpx>=0.28.1,<0.29",
+    # Local embedding for text-embedding datasets (e.g. math via
+    # nomic-embed-text-v2-moe). einops is required by the nomic MoE custom
+    # code loaded under trust_remote_code=True.
+    "sentence-transformers>=3.1",
+    "einops>=0.8",
 ]
 
 [tool.uv.sources]

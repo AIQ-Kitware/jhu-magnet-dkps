@@ -1,26 +1,26 @@
 title: "DKPS run-level prediction: per-replicate win rate vs naive sample mean"
 
 description: |
-  CLAIM: At a 4-query budget, DKPS predicts a held-out target model's
-  full-benchmark score with smaller absolute error than the naive sample-mean
-  estimator on at least 65% of (dataset, sampling-replicate) configurations
-  across the HELM datasets tested.
+  CLAIM
+    Informally: On a randomly drawn (dataset, target model, 4-query sample),
+    DKPS predicts the model's benchmark score more accurately than the naive
+    sample mean more often than not.
 
-  Each sweep point is ONE replicate: a (dataset_cfg, seed) pair. Per-point we
-  run DKPSRunPredictor exactly once (it samples a random target model,
-  subsamples `n_eval` queries, fits DKPS on `num_example_runs` reference
-  models, emits a single scalar prediction). The claim assertion compares
-  DKPS's absolute error to sample-mean's:
+    Formally: A replicate r is a (dataset, target_model, query_set) triple --
+    a held-out model and a random 4-query sample from one dataset. Let R be
+    the set of replicates evaluated. 
+    
+    Per replicate, record the absolute prediction error of each estimator:
+        err_dkps[r]   = abs( DKPS_predict(r) - true_score(r) )
+        err_sample[r] = abs( sample_mean(r)  - true_score(r) )
 
-      |p_dkps - actual| < |p_sample - actual|
+    The claim is:
+        For at least 65% of r in R : err_dkps[r] < err_sample[r]
 
-  Across the full sweep of `|dataset_cfg| x |seed|` points, the card-level
-  `reduce: fraction` asserts this holds on >= 65% of points.
-
-  Scope: med_qa (valid split) and 5 legalbench subsets (test split) — the
-  datasets available in the reference HELM suite on disk. Each dataset
-  carries its own (metric, split) pair, so the sweep is over joint
-  configurations, not independent symbols.
+claim_aggregation_strategy:
+  type: fraction
+  parameters:
+    threshold: 0.65
 
 claim:
   python: |
@@ -31,9 +31,6 @@ claim:
       f"DKPS MAE={err_dkps:.4f} >= Sample MAE={err_sample:.4f} "
       f"(actual={_result['actual']:.3f} p_dkps={_result['p_dkps']:.3f} p_sample={_result['p_sample']:.3f})"
     )
-  reduce:
-    type: fraction
-    threshold: 0.65
 
 symbols:
   helm_suite_path:
@@ -57,12 +54,12 @@ symbols:
   dataset_cfg:
     type: Any
     sweep:
-      - {dataset: "med_qa",                                                metric: "exact_match", split: "valid"}
-      - {dataset: "legalbench:subset=abercrombie",                         metric: "exact_match", split: "test"}
-      - {dataset: "legalbench:subset=corporate_lobbying",                  metric: "exact_match", split: "test"}
-      - {dataset: "legalbench:subset=function_of_decision_section",        metric: "exact_match", split: "test"}
-      - {dataset: "legalbench:subset=international_citizenship_questions", metric: "exact_match", split: "test"}
-      - {dataset: "legalbench:subset=proa",                                metric: "exact_match", split: "test"}
+      - {dataset: "med_qa",                                                metric: "quasi_exact_match", split: "valid"}
+      - {dataset: "legalbench:subset=abercrombie",                         metric: "quasi_exact_match", split: "test"}
+      - {dataset: "legalbench:subset=corporate_lobbying",                  metric: "quasi_exact_match", split: "test"}
+      - {dataset: "legalbench:subset=function_of_decision_section",        metric: "quasi_exact_match", split: "test"}
+      - {dataset: "legalbench:subset=international_citizenship_questions", metric: "quasi_exact_match", split: "test"}
+      - {dataset: "legalbench:subset=proa",                                metric: "quasi_exact_match", split: "test"}
 
   seed:
     type: int

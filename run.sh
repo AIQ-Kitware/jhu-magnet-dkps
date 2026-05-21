@@ -1,5 +1,10 @@
 #!/bin/bash
-python -m magnet.evaluation jhu_ta1/cards/jhu_instance_predict_auc.yaml
 
-# To run on a different dataset:
-# python -m magnet.evaluation jhu_ta1/cards/jhu_instance_predict_auc.yaml --set dataset=legalbench:subset=abercrombie
+
+uv run python -m magnet.evaluation \
+    jhu_ta1/cards/jhu_run_predict_query_efficiency.yaml \
+    --jobs 8
+
+uv run python -m magnet.evaluation \
+    jhu_ta1/cards/jhu_run_predict_query_efficiency_mae.yaml \
+    --jobs 8

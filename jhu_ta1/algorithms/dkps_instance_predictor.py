@@ -74,7 +74,6 @@ class DKPSInstancePredictor(InstancePredictor):
         # Parse MAGNET format
 
         # Unpack split classes into dataframes
-        train_run_specs_df       = train_split.run_specs
         train_scenario_states_df = train_split.scenario_state
         # train_stats_df           = train_split.stats
         train_instance_stats_df   = train_split.per_instance_stats
@@ -114,7 +113,11 @@ class DKPSInstancePredictor(InstancePredictor):
         id2magnet = eval_scenario_state_df[['scenario_state.request_states.instance.id', 'magnet.instance_predict_id']]
         id2magnet = id2magnet.set_index('scenario_state.request_states.instance.id').to_dict()['magnet.instance_predict_id']
 
-        metrics = train_run_specs_df['run_spec.metric_specs'].iloc[0][0]['args']['names']
+        # Predict the configured metric. Scraping run_spec.metric_specs is
+        # unreliable: newer HELM scenarios (e.g. omni_math) leave
+        # metric_specs[0]['args']['names'] empty and expose the metric via a
+        # dedicated metric class instead.
+        metrics = [self.metric]
 
         def _fmt_df(scenario_states_df, instance_stats_df=None):
             df = scenario_states_df[[
@@ -224,7 +227,10 @@ class DKPSInstancePredictor(InstancePredictor):
                 # [TODO] what if y_train only has one value?
                 #        could either assume - "everything is right" or "does it match target model response"
 
-                is_binary = (np.unique(y_train) == [0, 1]).all()
+                # Binary target iff every value is 0/1 and both classes appear
+                # (LogisticRegression needs >=2 classes; else regress). Robust
+                # to fractional metrics like omni_math_accuracy.
+                is_binary = set(np.unique(y_train)) == {0.0, 1.0}
                 if is_binary:
                     # if the target is binary (via a hacky check), use LogisticRegression
                     lr      = LogisticRegression().fit(X_train, y_train)
@@ -266,6 +272,7 @@ if __name__ == "__main__":
     parser.add_argument("--n-components-cmds", default=8, type=int, help="Number of components used by DKPS.")
 
     parser.add_argument("--dataset", default="med_qa", type=str, help="HELM dataset name.")
+    parser.add_argument("--metric", default="exact_match", type=str, help="HELM metric name to predict (e.g. 'omni_math_accuracy').")
     parser.add_argument("--embed-provider", default=None, type=str, help="Embedding provider (required for text-embedding datasets like math, wmt_14).")
     parser.add_argument("--embed-model", default=None, type=str, help="Embedding model name.")
 
@@ -278,8 +285,9 @@ if __name__ == "__main__":
         num_embedding_queries = args.num_embedding_queries,
         n_components_cmds = args.n_components_cmds,
         dataset           = args.dataset,
+        metric            = args.metric,
         embed_provider    = args.embed_provider,
         embed_model       = args.embed_model,
     )
 
-    predictor(args.helm_suite_path)
+    predictor(helm_suites=args.helm_suite_path)

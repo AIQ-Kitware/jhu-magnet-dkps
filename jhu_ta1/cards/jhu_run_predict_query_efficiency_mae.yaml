@@ -1,22 +1,31 @@
 title: "DKPS run-level prediction: 2x query efficiency (MAE in expectation)"
 
 description: |
-  CLAIM: On a majority of HELM datasets, DKPS at a query budget of `n_eval_small`
-  achieves MAE no worse than the naive sample-mean estimator evaluated at
-  `n_eval_large` (= 2 * n_eval_small) queries. That is: DKPS predicts target-model
-  scores as accurately using half as many benchmark queries.
+  CLAIM
+    Informally: On most datasets, DKPS predicts a model's benchmark score at
+    least as accurately from 4 queries as the naive sample mean does from 8.
 
-  This is an "in expectation" claim: each sweep point runs `num_replicates`
-  independent Monte-Carlo replicates INSIDE the symbol resolution and emits a
-  single scalar MAE per estimator for that dataset. This contrasts with the
-  companion card (jhu_run_predict_query_efficiency.yaml), which externalizes
-  replicates as sweep points and parallelizes them via the MAGNET scheduler.
+    Formally: Let D be the set of evaluation datasets. For each dataset d, run
+    N = 32 Monte-Carlo replicates. Replicate r draws a random target model
+    (model_r) and random query samples, then records the absolute prediction
+    error of each estimator:
 
-  Design note for Kitware: There's no native way today to express more complex
-  reducers - I opened a commit for a simple fraction reducer, but if we wanted
-  to leave the parallelism in a place where it is managed by the runtime
-  (instead of maybe abusing the library like I'm doing here...) we could write
-  a more expressive reducer — I don't think it'd be that complicated.
+        err_dkps[d][r]   = abs( DKPS_predict(model_r, queries=4) - true_score(model_r) )
+        err_sample[d][r] = abs( sample_mean(model_r,  queries=8) - true_score(model_r) )
+
+    The per-dataset MAE is the average of those N per-replicate errors:
+
+        MAE_dkps(d)   = (1/N) * sum over r of  err_dkps[d][r]
+        MAE_sample(d) = (1/N) * sum over r of  err_sample[d][r]
+
+    The claim is:
+        For at least 80% of d in D : MAE_dkps(d) <= MAE_sample(d)
+
+
+claim_aggregation_strategy:
+  type: fraction
+  parameters:
+    threshold: 0.80
 
 claim:
   python: |
@@ -26,9 +35,6 @@ claim:
       f"Sample@{n_eval_large}={_results['avg_sample_mae']:.4f} "
       f"(n_replicates={_results['num_replicates']})"
     )
-  reduce:
-    type: fraction
-    threshold: 0.80
 
 symbols:
   helm_suite_path:
@@ -62,12 +68,12 @@ symbols:
   dataset_cfg:
     type: Any
     sweep:
-      - {dataset: "med_qa",                                                metric: "exact_match", split: "valid"}
-      - {dataset: "legalbench:subset=abercrombie",                         metric: "exact_match", split: "test"}
-      - {dataset: "legalbench:subset=corporate_lobbying",                  metric: "exact_match", split: "test"}
-      - {dataset: "legalbench:subset=function_of_decision_section",        metric: "exact_match", split: "test"}
-      - {dataset: "legalbench:subset=international_citizenship_questions", metric: "exact_match", split: "test"}
-      - {dataset: "legalbench:subset=proa",                                metric: "exact_match", split: "test"}
+      - {dataset: "med_qa",                                                metric: "quasi_exact_match", split: "valid"}
+      - {dataset: "legalbench:subset=abercrombie",                         metric: "quasi_exact_match", split: "test"}
+      - {dataset: "legalbench:subset=corporate_lobbying",                  metric: "quasi_exact_match", split: "test"}
+      - {dataset: "legalbench:subset=function_of_decision_section",        metric: "quasi_exact_match", split: "test"}
+      - {dataset: "legalbench:subset=international_citizenship_questions", metric: "quasi_exact_match", split: "test"}
+      - {dataset: "legalbench:subset=proa",                                metric: "quasi_exact_match", split: "test"}
 
   # Monte-Carlo over num_replicates seeds. Per seed: two predictor calls
   # (one at each query budget) so we can compare DKPS@n_eval_small vs
@@ -111,6 +117,7 @@ symbols:
       errors_dkps_small   = []
       errors_sample_large = []
       for i in range(num_replicates):
+          print(f"[{dataset}] Running replicate {i} of {num_replicates}...")
           seed = base_seed + i
           buf = StringIO()
           with redirect_stdout(buf):
