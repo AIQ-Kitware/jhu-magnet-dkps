@@ -75,6 +75,7 @@ symbols:
           num_embedding_queries=num_embedding_queries,
           n_components_cmds=8,
           dataset=dataset,
+          metric=metric,
       )
 
       train_split, test_split = predictor.prepare_all_dataframes(HelmSuite(helm_suite_path))

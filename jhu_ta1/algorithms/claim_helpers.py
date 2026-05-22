@@ -45,13 +45,21 @@ def run_one_replicate(
     helm_suite_path: str,
     dataset: str,
     metric: str,
-    split: str,
     n_eval: int,
     seed: int,
     num_example_runs: int,
     n_components_cmds: int = 8,
+    split: str | None = None,
+    embed_provider: str | None = None,
+    embed_model: str | None = None,
 ) -> ReplicateResult:
-    """One sampling replicate. Delegates sampling to DKPSRunPredictor.prepare_all_dataframes."""
+    """One sampling replicate. Delegates sampling to DKPSRunPredictor.prepare_all_dataframes.
+
+    split=None (default) pools across all HELM splits for the ground-truth score,
+    matching the predictor and the private pipeline. embed_provider/embed_model
+    apply to text-embedding datasets (e.g. math, wmt_14); the predictor ignores
+    them for onehot datasets (med_qa, legalbench).
+    """
     predictor = DKPSRunPredictor(
         num_example_runs  = num_example_runs,
         num_eval_samples  = n_eval,
@@ -60,6 +68,8 @@ def run_one_replicate(
         dataset           = dataset,
         metric            = metric,
         split             = split,
+        embed_provider    = embed_provider,
+        embed_model       = embed_model,
     )
 
     buf = StringIO()
@@ -67,14 +77,16 @@ def run_one_replicate(
         train_split, test_split = predictor.prepare_all_dataframes(_suite_for(helm_suite_path))
         p_dkps = float(predictor.predict(train_split, test_split.sequester())[0].mean)
 
-    # Ground truth: target's full-benchmark aggregate score.
+    # Ground truth: target's full-benchmark aggregate score. With split=None,
+    # pool across splits (mean of the per-split means) to match the predictor.
     target_stats_row = test_split.stats
     target_stats_row = target_stats_row[
         (target_stats_row['stats.name.name'] == metric)
-        & (target_stats_row['stats.name.split'] == split)
         & (target_stats_row['stats.name.perturbation.name'].isna())
     ]
-    actual = float(target_stats_row['stats.mean'].iloc[0])
+    if split is not None:
+        target_stats_row = target_stats_row[target_stats_row['stats.name.split'] == split]
+    actual = float(target_stats_row['stats.mean'].mean())
 
     # Sample-mean over the n_eval queried instances.
     target_per_instance_rows = test_split.per_instance_stats

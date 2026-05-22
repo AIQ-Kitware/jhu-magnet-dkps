@@ -30,7 +30,7 @@ to download and link them into a single `_all` directory.
 mkdir -p data/crfm-helm-public/lite/benchmark_output/runs/_all
 
 magnet download helm --benchmark=lite --list-versions | while read version; do
-    magnet download helm data/crfm-helm-public --benchmark=lite --version="$version" --runs "regex:med_qa.*"
+    magnet download helm data/crfm-helm-public --benchmark=lite --version="$version" --runs "regex:wmt.*"
     (cd data/crfm-helm-public/lite/benchmark_output/runs/_all && ln -s "../$version"/* .)
 done
 ```

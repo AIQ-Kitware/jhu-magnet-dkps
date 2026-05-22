@@ -34,7 +34,11 @@ class DKPSRunPredictor(RunPredictor):
             Controls run_spec filtering and embedding strategy.
         metric: HELM metric name to predict (e.g. 'quasi_exact_match'). The private
             DKPS codebase scores runs with quasi_exact_match (see parsers/*.py).
-        split: HELM split to target (e.g. 'valid').
+        split: HELM split to target. Default None pools across all splits (the
+            full-benchmark mean), matching the private pipeline -- HELM reports
+            some benchmarks (med_qa, wmt_14) on both 'valid' and 'test', and
+            the eval instances are drawn from all of them. Set a split string
+            to restrict the target to one split.
         embed_provider: Embedding API provider for text-embedding datasets. Ignored for
             onehot datasets (med_qa, legalbench).
         embed_model: Embedding model name. Ignored for onehot datasets.
@@ -48,7 +52,7 @@ class DKPSRunPredictor(RunPredictor):
         n_components_cmds: int = 8,
         dataset: str = "med_qa",
         metric: str = "quasi_exact_match",
-        split: str = "valid",
+        split: str | None = None,
         embed_provider: str | None = None,
         embed_model: str | None = None,
     ):
@@ -107,19 +111,23 @@ class DKPSRunPredictor(RunPredictor):
         # --
         # Fetch LR targets: each train model's FULL-benchmark aggregate score.
         #
-        # train_stats_df has multiple rows per run_spec (one per stat-name/split/perturbation
-        # combo). We want the row matching (metric, split, no perturbation).
+        # train_stats_df has multiple rows per run_spec (one per stat-name/split/
+        # perturbation combo). Keep the unperturbed rows for `metric`; with
+        # self.split=None we pool across splits (mean of the per-split means --
+        # HELM's valid/test splits are ~equal size, so this is the full-benchmark
+        # mean), matching the private pipeline.
         y_rows = train_stats_df[
             (train_stats_df['stats.name.name'] == self.metric)
-            & (train_stats_df['stats.name.split'] == self.split)
             & (train_stats_df['stats.name.perturbation.name'].isna())
         ]
+        if self.split is not None:
+            y_rows = y_rows[y_rows['stats.name.split'] == self.split]
         assert len(y_rows) > 0, (
             f'No train_stats rows match (metric={self.metric}, split={self.split}, unperturbed). '
             f'Available: {train_stats_df[["stats.name.name", "stats.name.split"]].drop_duplicates().to_dict("records")}'
         )
 
-        y_by_run_spec = dict(zip(y_rows['run_spec.name'], y_rows['stats.mean']))
+        y_by_run_spec = y_rows.groupby('run_spec.name')['stats.mean'].mean().to_dict()
 
         # --
         # Build embedding dataframes for DKPS.
@@ -230,7 +238,7 @@ class DKPSRunPredictor(RunPredictor):
 
         return [RunPrediction(
             run_spec_name=target_run_spec,
-            split=self.split,
+            split=self.split or 'all',
             stat_name=self.metric,
             mean=y_hat,
         )]
@@ -247,7 +255,7 @@ if __name__ == "__main__":
     parser.add_argument('--n-components-cmds', default=8, type=int)
     parser.add_argument('--dataset', default='med_qa', type=str)
     parser.add_argument('--metric', default='quasi_exact_match', type=str)
-    parser.add_argument('--split', default='valid', type=str)
+    parser.add_argument('--split', default=None, type=str, help="HELM split; default None pools all splits.")
     parser.add_argument('--embed-provider', default=None, type=str)
     parser.add_argument('--embed-model', default=None, type=str)
     args = parser.parse_args()
