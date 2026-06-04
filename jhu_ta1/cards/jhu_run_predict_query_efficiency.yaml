@@ -1,14 +1,51 @@
 title: "DKPS run-level prediction: per-replicate win rate vs naive sample mean"
 
+version: 1.1  # No enforced convention or numbering here
+
+organizations:
+  - JHU
+
+submitter:
+  name: Ben Johnson
+  email: ben@jataware.com
+
+tags:
+  - query-efficient-benchmarking
+  - dkps
+  - med_qa
+  - legalbench
+  - wmt_14
+  - helm-lite
+
+links:
+  - title: "Statistical inference on black-box generative models in the data kernel perspective space"
+    url: "https://arxiv.org/abs/2410.01106"
+    type: "publication"
+  - title: "Query-efficient model evaluation using cached responses"
+    url: "https://arxiv.org/abs/2605.07096"
+    type: "publication"
+  - title: "med_qa"
+    url: "https://huggingface.co/datasets/bigbio/med_qa"
+    type: "dataset"
+  - title: "legalbench"
+    url: "https://huggingface.co/datasets/nguha/legalbench"
+    type: "dataset"
+  - title: "wmt_14"
+    url: "https://huggingface.co/datasets/wmt/wmt14"
+    type: "dataset"
+  - title: "Precomputed HELM lite benchmark outputs"
+    url: "https://console.cloud.google.com/storage/browser/crfm-helm-public/lite"
+    type: "asset"
+
 description: |
   CLAIM
     Informally: On a randomly drawn (dataset, target model, 4-query sample),
-    DKPS predicts the model's benchmark score more accurately than the naive
-    sample mean more often than not.
+    given a sufficient number of training models, DKPS predicts the model's 
+    benchmark score more accurately than the naive sample mean more often than not.
 
-    Formally: A replicate r is a (dataset, target_model, query_set) triple --
-    a held-out model and a random 4-query sample from one dataset. Let R be
-    the set of replicates evaluated. 
+    Formally: A replicate r is a (dataset, target_model, train_models, query_set) tuple --
+    a held-out model, a set of training models, and a random 4-query sample from one dataset.
+    Let R be the set of replicates evaluated. 
     
     Per replicate, record the absolute prediction error of each estimator:
         err_dkps[r]   = abs( DKPS_predict(r) - true_score(r) )
