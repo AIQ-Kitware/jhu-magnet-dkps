@@ -1,0 +1,61 @@
+title: "JHU DKPS based per-instance metric prediction"
+
+description: |
+  We can predict whether a particular model will produce the correct output based on the performance of similar models in Data Kernel Perspective Space (DKPS).
+  Evaluation uses separate embedding and test queries: a small set of queries builds the DKPS model space, then predictions are made on disjoint unseen queries.
+  Multiple replicates with different random seeds are run to assess stability.
+
+  Pipeline form of `jhu_instance_predict_auc.yaml`. One job per seed, one
+  verdict per seed, and the fit is cached per cell -- a seed that has already
+  run is not re-run, and one seed can be re-run without disturbing the others.
+
+version: 1.0
+
+organizations:
+  - JHU
+
+submitter:
+  name: Ben Johnson
+  email: ben@jataware.com
+
+tags:
+  - dkps
+  - instance-prediction
+  - benchmark-evaluation
+
+links:
+  - title: "DKPS"
+    url: "https://github.com/jataware/dkps"
+    type: "code"
+
+  - title: "HELM Lite"
+    url: "https://crfm.stanford.edu/helm/lite/latest/"
+    type: "dataset"
+
+kwdagger:
+  pipeline: 'jhu_ta1.magnet.pipeline.dkps_pipeline()'
+  result_node: dkps_auc
+  matrix:
+    # A location on whichever machine is running, so it belongs to the run
+    # rather than to the claim. Override it per host:
+    #   magnet evaluate <card> --override 'helm_suite_path: /path/to/runs/v1.0.0'
+    # is not available for a matrix entry -- edit here, or generate the card.
+    dkps_auc.helm_suite_path: /data/crfm-helm-public/lite/benchmark_output/runs/v1.0.0
+    dkps_auc.dataset: med_qa
+    dkps_auc.metric: exact_match
+    # Must not exceed the med_qa runs the suite holds: 31 in lite v1.0.0, where
+    # the original card asks for 50 and dies with "Sample larger than
+    # population" on any copy that small.
+    dkps_auc.num_example_runs: 25
+    dkps_auc.seed:
+      - 1
+      - 2
+      - 3
+
+evidence:
+  - measures: metrics.dkps_auc.auc
+    relation: {gt: 0.5}
+    scope: "med_qa exact_match, 3 seeds, 25 example runs from HELM lite v1.0.0"
+    relaxes: >
+      AUC above chance on one dataset and one metric, at the sample sizes this
+      suite supports; the claim is about instance prediction in general.
