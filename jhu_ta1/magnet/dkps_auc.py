@@ -2,14 +2,9 @@
 """
 Fit DKPS for one seed and score the per-instance predictions.
 
-One job per seed. The seeds are replicates of an expensive fit -- the whole
-suite is read and embedded per seed -- so unlike a card that reduces a table,
-there is real work here for a pipeline to keep: a cell that has already run is
-not re-run, and one seed can be re-run without disturbing the others.
-
-`helm_suite_path` is a pipeline parameter rather than a card constant. It names
-a location on whichever machine is running, which is not a property of the
-claim.
+One job per seed. Each seed reads and embeds the whole suite, so a run that
+reuses finished cells saves real time, and a single seed can be re-run on its
+own.
 """
 import json
 

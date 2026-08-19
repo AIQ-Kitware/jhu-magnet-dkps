@@ -32,34 +32,11 @@ links:
     type: "dataset"
 
 kwdagger:
-  # Declared, not called. The `module.function()` form evaluates whatever it
-  # names; this one is read as data, so a card can be run without trusting it
-  # to construct its own DAG.
-  pipeline:
-    nodes:
-      dkps_auc:
-        executable: 'python -m jhu_ta1.magnet.dkps_auc'
-        out_paths:
-          out_fpath: 'dkps_auc.json'
-        primary_out_key: out_fpath
-        algo_params:
-          # A location on whichever machine is running, so it belongs to the
-          # run rather than to the claim.
-          helm_suite_path: /data/crfm-helm-public/lite/benchmark_output/runs/v1.0.0
-          dataset: med_qa
-          metric: exact_match
-          n_components_cmds: 8
-          num_embedding_queries: 50
-          num_eval_samples: 75
-          # Must not exceed the med_qa runs the suite holds: 31 in lite v1.0.0,
-          # where the original card asks for 50 and dies with "Sample larger
-          # than population" on any copy that small.
-          num_example_runs: 25
-          seed: 1
-
+  pipeline: ../magnet/dkps_pipeline.yaml
   result_node: dkps_auc
 
   matrix:
+    dkps_auc.helm_suite_path: /data/crfm-helm-public/lite/benchmark_output/runs/v1.0.0
     dkps_auc.seed:
       - 1
       - 2
