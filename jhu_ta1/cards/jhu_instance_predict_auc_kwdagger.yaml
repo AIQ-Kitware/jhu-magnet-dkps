@@ -6,8 +6,7 @@ description: |
   Multiple replicates with different random seeds are run to assess stability.
 
   Pipeline form of `jhu_instance_predict_auc.yaml`. One job per seed, one
-  verdict per seed, and the fit is cached per cell -- a seed that has already
-  run is not re-run, and one seed can be re-run without disturbing the others.
+  verdict per seed, and an unchanged card reuses the fits it already has.
 
 version: 1.0
 
@@ -33,20 +32,34 @@ links:
     type: "dataset"
 
 kwdagger:
-  pipeline: 'jhu_ta1.magnet.pipeline.dkps_pipeline()'
+  # Declared, not called. The `module.function()` form evaluates whatever it
+  # names; this one is read as data, so a card can be run without trusting it
+  # to construct its own DAG.
+  pipeline:
+    nodes:
+      dkps_auc:
+        executable: 'python -m jhu_ta1.magnet.dkps_auc'
+        out_paths:
+          out_fpath: 'dkps_auc.json'
+        primary_out_key: out_fpath
+        algo_params:
+          # A location on whichever machine is running, so it belongs to the
+          # run rather than to the claim.
+          helm_suite_path: /data/crfm-helm-public/lite/benchmark_output/runs/v1.0.0
+          dataset: med_qa
+          metric: exact_match
+          n_components_cmds: 8
+          num_embedding_queries: 50
+          num_eval_samples: 75
+          # Must not exceed the med_qa runs the suite holds: 31 in lite v1.0.0,
+          # where the original card asks for 50 and dies with "Sample larger
+          # than population" on any copy that small.
+          num_example_runs: 25
+          seed: 1
+
   result_node: dkps_auc
+
   matrix:
-    # A location on whichever machine is running, so it belongs to the run
-    # rather than to the claim. Override it per host:
-    #   magnet evaluate <card> --override 'helm_suite_path: /path/to/runs/v1.0.0'
-    # is not available for a matrix entry -- edit here, or generate the card.
-    dkps_auc.helm_suite_path: /data/crfm-helm-public/lite/benchmark_output/runs/v1.0.0
-    dkps_auc.dataset: med_qa
-    dkps_auc.metric: exact_match
-    # Must not exceed the med_qa runs the suite holds: 31 in lite v1.0.0, where
-    # the original card asks for 50 and dies with "Sample larger than
-    # population" on any copy that small.
-    dkps_auc.num_example_runs: 25
     dkps_auc.seed:
       - 1
       - 2
