@@ -78,13 +78,10 @@ def _pull_sample_mean(test_split, metric):
 # is what the card SHADOWS, and it is where every gap lives; it is linked from
 # the card with `approximates` and its premises are annotated on the predictor.
 #
-# One thing the July 2026 edge table recorded no longer applies. It flagged
-# that the card required the proposition to hold for at least 80% of datasets
-# (claim_aggregation_strategy: fraction) with no counterpart anywhere in the
-# formalization. In the kwdagger form the datasets are matrix cells and the
-# claim is per cell -- `mae_gap <= threshold` for this dataset -- so the
-# unformalized dataset-population layer is gone from the card itself and lives,
-# if anywhere, in how a reader aggregates the per-cell verdicts.
+# There is no dataset-population layer to formalize here: datasets are matrix
+# cells and the claim is per cell -- `mae_gap <= threshold` for this dataset.
+# Any aggregation across datasets lives in how a reader reads the per-cell
+# verdicts, not in the card.
 @theory.tests('DkpsQuench2026.Paper.TheoryPractice.EmpiricalCrossBudgetMAEClaim',
               note='the node computes exactly this proposition per dataset: empirical MAE of the '
                    'DKPS predictor at 4 queries against the sample mean at 8, averaged over 32 '

@@ -95,12 +95,9 @@ class DKPSRunPredictor(RunPredictor):
     # stay `assumes` until either an estimator for the population MSE gap exists
     # or the theorem is restated in estimated coordinates.
     #
-    # Worth keeping the history: in the July 2026 edge table the headline gap
-    # was that the proved theorem was about a NEAREST-NEIGHBOUR predictor while
-    # the shipped estimator is LinearRegression. That is closed -- the OLS
-    # theorem's `fit` binder is an exact least-squares minimizer, which is what
-    # `LinearRegression().fit` computes, so the estimator now binds faithfully.
-    # The gap moved rather than vanished, into these two premises.
+    # The estimator binds the theorem faithfully: the OLS theorem's `fit` binder
+    # is an exact least-squares minimizer, which is what `LinearRegression().fit`
+    # computes. What is NOT discharged is the pair of premises below.
     @theory.assumes('DkpsQuench2026.Paper.TheoryPractice.highProbMAE_queryEfficient_crossBudget_of_affineRiskGap::hgap',
                     note='the non-vacuity condition of the whole theorem: that an affine witness '
                          'in TRUE perspective coordinates beats the baseline in population MSE. '

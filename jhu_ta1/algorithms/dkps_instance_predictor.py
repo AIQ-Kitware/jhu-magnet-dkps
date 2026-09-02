@@ -94,10 +94,9 @@ class DKPSInstancePredictor(InstancePredictor):
                          'aligns at n_components_cmds components; that the aligned geometry '
                          'converges to the true one at these query budgets is asserted by use, '
                          'not by evidence')
-    # A3 asks for a learning rule with COMPACT RANGE. This is the one place the
-    # July 2026 edge table was simply wrong: it recorded A3 as satisfied
-    # "predictions are clipped to [0,1]", which describes the RUN-level
-    # predictor. Nothing here clips. The binary branch returns predict_proba,
+    # A3 asks for a learning rule with COMPACT RANGE. Nothing here clips -- that
+    # is the RUN-level predictor, not this one. The binary branch returns
+    # predict_proba,
     # which is in [0,1] by construction; the fallback regression branch returns
     # an unbounded LinearRegression output. Which branch runs is decided per
     # instance by `is_binary`, so the range is compact for the card's usual
