@@ -14,6 +14,11 @@ import kwconf
 
 from jhu_ta1.magnet._dataset_cfg import split_dataset_cfg
 
+# Theory annotations against theory/indexes/dkps-144de76c.yaml in the eval
+# superrepo. Inert at run time; MAGNET reads them with `ast` and imports
+# nothing. Must be imported as a namespace -- bare-name calls extract nothing.
+import magnet.theory as theory
+
 
 class QueryEfficiencyMaeConfig(kwconf.Config):
     helm_suite_path: str = kwconf.Value(
@@ -34,6 +39,17 @@ class QueryEfficiencyMaeConfig(kwconf.Config):
         tags=['out_path', 'primary'])
 
 
+# The theorem scores a query subset directly. Pooling by SPLIT reweights
+# instances by inverse split size, so what this returns is not the instance-mean
+# the statement indexes over. The difference is small on HELM lite, where the
+# valid/test splits are near-equal, but it is the kind of thing that only
+# becomes visible once someone writes the binder down.
+#
+# This function is also called separately for the candidate and the baseline
+# arm, from independently prepared splits. The two agree because the seed fixes
+# the target model and pooling does not depend on the query budget -- but the
+# proposition compares two predictors against ONE truth, and the code computes
+# it twice. Faithful by construction rather than by design.
 def _pull_actual(test_split, metric):
     """Full-benchmark score: the mean of the per-split means."""
     rows = test_split.stats
@@ -50,6 +66,33 @@ def _pull_sample_mean(test_split, metric):
     return float(rows['per_instance_stats.stats.mean'].mean())
 
 
+# What this node computes and what it stands for are two different
+# propositions, and separating them is the point.
+#
+# `EmpiricalCrossBudgetMAEClaim` is what the loop below LITERALLY computes:
+# mean absolute error of the DKPS predictor at n_eval_small queries against the
+# sample mean at n_eval_large, averaged over num_replicates. The match is
+# definitional, so this is `tests`.
+#
+# The population statement -- highProbMAE_queryEfficient_crossBudget_of_... --
+# is what the card SHADOWS, and it is where every gap lives; it is linked from
+# the card with `approximates` and its premises are annotated on the predictor.
+#
+# One thing the July 2026 edge table recorded no longer applies. It flagged
+# that the card required the proposition to hold for at least 80% of datasets
+# (claim_aggregation_strategy: fraction) with no counterpart anywhere in the
+# formalization. In the kwdagger form the datasets are matrix cells and the
+# claim is per cell -- `mae_gap <= threshold` for this dataset -- so the
+# unformalized dataset-population layer is gone from the card itself and lives,
+# if anywhere, in how a reader aggregates the per-cell verdicts.
+@theory.tests('DkpsQuench2026.Paper.TheoryPractice.EmpiricalCrossBudgetMAEClaim',
+              note='the node computes exactly this proposition per dataset: empirical MAE of the '
+                   'DKPS predictor at 4 queries against the sample mean at 8, averaged over 32 '
+                   'Monte-Carlo replicates')
+@theory.satisfies('DkpsQuench2026.Paper.TheoryPractice.highProbMAE_queryEfficient_crossBudget_of_affineRiskGap::hmu',
+                  note='each replicate is a seeded draw -- base_seed + offset fixes the target '
+                       'model, the reference runs and the query subset -- so the estimation '
+                       'randomness is a genuine probability measure at every stage')
 def main(argv=None, **kwargs):
     from magnet.backends.helm.helm_outputs import HelmSuite
     from jhu_ta1.algorithms.dkps_run_predictor import DKPSRunPredictor
@@ -105,8 +148,13 @@ def main(argv=None, **kwargs):
         'mae_gap': avg_dkps - avg_sample,
     }
 
+    # Nested under result.metrics, which is where kwdagger's generic
+    # YamlProcessNode loader reads a node's metrics from (the pipeline is
+    # declared in YAML, so it has no load_result of its own). A flat payload
+    # loads as an empty metrics namespace and the claim dies on the name
+    # `metrics` after the node has already succeeded.
     with open(config['out_fpath'], 'w') as file:
-        json.dump(payload, file, indent=2)
+        json.dump({'result': {'metrics': payload}}, file, indent=2)
 
 
 __cli__ = QueryEfficiencyMaeConfig

@@ -10,6 +10,11 @@ import json
 
 import kwconf
 
+# Theory annotations against theory/indexes/dkps-144de76c.yaml in the eval
+# superrepo. Inert at run time; MAGNET reads them with `ast` and imports
+# nothing. Must be imported as a namespace -- bare-name calls extract nothing.
+import magnet.theory as theory
+
 
 class DkpsAucConfig(kwconf.Config):
     helm_suite_path: str = kwconf.Value(
@@ -27,6 +32,33 @@ class DkpsAucConfig(kwconf.Config):
         tags=['out_path', 'primary'])
 
 
+# What the card asserts and what the theorem concludes are different KINDS of
+# thing, and that is the honest headline for this card. Helm2025.DKPS.Theorem1
+# concludes CONVERGENCE: as the estimation budget grows, the risk of a learning
+# rule on estimated embeddings tends to its risk on the true embeddings. This
+# node reports a point -- AUC on one held-out split at one pool size -- and the
+# card asserts that point is above 0.5. A point above chance is not a statement
+# about a limit, and no hypothesis in the theorem bridges them.
+#
+# A4 (`h_cont_loss`) is `violates`, not `substitutes`. The theorem controls a
+# risk under a JOINTLY CONTINUOUS loss; roc_auc_score is a rank statistic over
+# thresholded exact-match labels and is not continuous in the predictions --
+# it is piecewise constant, and it is undefined outright when one class is
+# absent, which is the `degenerate` branch below. Substituting a discontinuous
+# score does not weaken the conclusion, it steps outside the hypothesis. Marked
+# `violates` because the requirement is explicit and demonstrably unmet, though
+# there is no formal counterexample to cite.
+@theory.approximates('Helm2025.DKPS.Theorem1',
+                     note='the card asserts a point (AUC > 0.5 at one pool size); the theorem '
+                          'concludes convergence of the estimated-embedding risk to the '
+                          'true-embedding risk as the estimation budget grows')
+@theory.violates('Helm2025.DKPS.Theorem1::h_cont_loss',
+                 note='A4 asks for a jointly continuous loss; AUC is a piecewise-constant rank '
+                      'statistic over thresholded labels, and is undefined when one class is '
+                      'absent (the degenerate branch)')
+@theory.satisfies('Helm2025.DKPS.Theorem1::h_bound_label',
+                  note='labels are per-instance correctness indicators in {0,1}, so their support '
+                       'is compact')
 def main(argv=None, **kwargs):
     import numpy as np
     from sklearn.metrics import roc_auc_score
@@ -83,8 +115,13 @@ def main(argv=None, **kwargs):
         'metric': metric,
     }
 
+    # Nested under result.metrics, which is where kwdagger's generic
+    # YamlProcessNode loader reads a node's metrics from (the pipeline is
+    # declared in YAML, so it has no load_result of its own). A flat payload
+    # loads as an empty metrics namespace and the claim dies on the name
+    # `metrics` after the node has already succeeded.
     with open(config['out_fpath'], 'w') as file:
-        json.dump(payload, file, indent=2)
+        json.dump({'result': {'metrics': payload}}, file, indent=2)
 
 
 __cli__ = DkpsAucConfig

@@ -50,12 +50,56 @@ links:
     url: "https://github.com/jataware/dkps"
     type: "code"
 
+# What this card's verdict stands on.
+#
+# Two propositions, deliberately kept apart. `EmpiricalCrossBudgetMAEClaim` is
+# what the node LITERALLY computes -- the match is definitional, so the link is
+# `tests` and it is annotated at the code site in ../magnet/query_efficiency_mae.py.
+# `highProbMAE_queryEfficient_crossBudget_of_affineRiskGap` is what the card
+# SHADOWS, and it is where every gap lives; it is `approximates` here and its
+# premises are annotated on DKPSRunPredictor.predict.
+#
+# Separating them is what stops "the card asserts a proved inequality" from
+# being said about the population theorem, which it is not.
+#
+# `empirical_sources` is read with `ast` -- nothing is imported, so auditing
+# this card needs neither sklearn nor a HELM suite. The annotations sit at the
+# code sites, so they move with the code instead of rotting the way the earlier
+# line-numbered `site=` references did.
+#
+# The unaccounted premises this is meant to surface are `hgap` and
+# `hcompetitive`. Both are stated in terms of the TRUE perspective embedding,
+# which the experiment never computes, so they are `assumes` and they must stay
+# `assumes`: this is not "unchecked", it is "unobservable in principle from
+# what the card measures".
+theory:
+  indexes:
+    - ../../theory/indexes/dkps-144de76c.yaml
+
+  empirical_sources:
+    - ../magnet/query_efficiency_mae.py
+    - ../algorithms/dkps_run_predictor.py
+
+  links:
+    - relation: approximates
+      ref: DkpsQuench2026.Paper.TheoryPractice.highProbMAE_queryEfficient_crossBudget_of_affineRiskGap
+      note: >
+        The card measures a finite empirical shadow of this population
+        conclusion: one MAE comparison at fixed budgets, rather than an
+        eventual high-probability risk inequality. The conclusion is asymptotic
+        in the reference-pool size and holds with high probability; the card
+        runs at a single pool size (num_example_runs = 64) and reports a point
+        estimate over 32 replicates. No part of the card estimates the
+        probability the conclusion is quantified over.
+
 kwdagger:
   pipeline: ../magnet/query_efficiency_mae_pipeline.yaml
   result_node: query_efficiency_mae
 
   matrix:
-    query_efficiency_mae.helm_suite_path: /data/crfm-helm-public/lite/benchmark_output/runs/v1.0.0
+    # Where a precomputed copy of the suite lives on this box, or '' to
+    # download the matching runs. Not identity-bearing (a perf param).
+    materialize_lite.precomputed_roots: ''
     query_efficiency_mae.dataset_cfg:
       - 'med_qa|quasi_exact_match'
       - 'legalbench:subset=abercrombie|quasi_exact_match'

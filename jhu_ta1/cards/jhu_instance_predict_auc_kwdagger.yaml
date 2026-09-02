@@ -41,12 +41,38 @@ links:
     url: "https://crfm.stanford.edu/helm/lite/latest/"
     type: "dataset"
 
+# What this card's verdict stands on.
+#
+# `Helm2025.DKPS.Theorem1` is about exactly what this card runs: a learning
+# rule applied to estimated DKPS embeddings. What it CONCLUDES is convergence
+# -- as the estimation budget grows, the estimated-embedding risk tends to the
+# true-embedding risk. The card asserts a point, AUC above 0.5 at one pool
+# size. A point above chance is not a statement about a limit, and no
+# hypothesis in the theorem bridges them; hence `approximates`, annotated at
+# the code site in ../magnet/dkps_auc.py.
+#
+# The premise worth reading first is `h_cont_loss`, recorded as `violates`:
+# assumption A4 asks for a jointly continuous loss and AUC is a
+# piecewise-constant rank statistic. That is not a weaker conclusion, it is
+# outside the hypothesis.
+#
+# `empirical_sources` is read with `ast`; nothing is imported.
+theory:
+  indexes:
+    - ../../theory/indexes/dkps-144de76c.yaml
+
+  empirical_sources:
+    - ../magnet/dkps_auc.py
+    - ../algorithms/dkps_instance_predictor.py
+
 kwdagger:
   pipeline: ../magnet/dkps_pipeline.yaml
   result_node: dkps_auc
 
   matrix:
-    dkps_auc.helm_suite_path: /data/crfm-helm-public/lite/benchmark_output/runs/v1.0.0
+    # Where a precomputed copy of the suite lives on this box, or '' to
+    # download the matching runs. Not identity-bearing (a perf param).
+    materialize_lite.precomputed_roots: ''
     dkps_auc.seed:
       - 1
       - 2

@@ -12,6 +12,11 @@ import kwconf
 
 from jhu_ta1.magnet._dataset_cfg import split_dataset_cfg
 
+# Theory annotations against theory/indexes/dkps-144de76c.yaml in the eval
+# superrepo. Inert at run time; MAGNET reads them with `ast` and imports
+# nothing. Must be imported as a namespace -- bare-name calls extract nothing.
+import magnet.theory as theory
+
 
 class QueryEfficiencyConfig(kwconf.Config):
     helm_suite_path: str = kwconf.Value(
@@ -30,6 +35,21 @@ class QueryEfficiencyConfig(kwconf.Config):
         tags=['out_path', 'primary'])
 
 
+# `EmpiricalWinRateClaim` is `threshold <= empiricalWinFraction truth candidate
+# baseline` -- the candidate's absolute error is strictly smaller than the
+# baseline's on at least `threshold` of the units. This node computes the
+# per-unit ingredient, `err_dkps - err_sample`, and the card asserts it is
+# negative for this cell; the fraction is taken by whoever reads the sweep, not
+# by the node. Recorded as `tests` because the per-unit comparison is
+# definitional, with the caveat that the card's own threshold (0.0 on the gap)
+# is the n = 1, threshold = 1 corner of the proposition rather than the 65%
+# figure the description quotes.
+#
+# The query budgets are equal here -- see the note on run_one_replicate.
+@theory.tests('DkpsQuench2026.Paper.TheoryPractice.EmpiricalWinRateClaim',
+              note='the node computes the per-replicate strict-win comparison the proposition '
+                   'averages; the win FRACTION over the (dataset, seed) grid is formed outside '
+                   'the node, and the description\'s 65% is not asserted by any single cell')
 def main(argv=None, **kwargs):
     from jhu_ta1.algorithms.claim_helpers import run_one_replicate
 
@@ -65,8 +85,13 @@ def main(argv=None, **kwargs):
         'err_gap': err_dkps - err_sample,
     }
 
+    # Nested under result.metrics, which is where kwdagger's generic
+    # YamlProcessNode loader reads a node's metrics from (the pipeline is
+    # declared in YAML, so it has no load_result of its own). A flat payload
+    # loads as an empty metrics namespace and the claim dies on the name
+    # `metrics` after the node has already succeeded.
     with open(config['out_fpath'], 'w') as file:
-        json.dump(payload, file, indent=2)
+        json.dump({'result': {'metrics': payload}}, file, indent=2)
 
 
 __cli__ = QueryEfficiencyConfig
