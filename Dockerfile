@@ -16,7 +16,7 @@
 # magnet.backends.helm.cli.materialize_helm_suite, which is newer than main.
 ARG BASE_IMAGE=pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel
 FROM ${BASE_IMAGE}
-ARG MAGNET_REF=0ce80c623a15516f719d06d95c84118d3d71de0f
+ARG MAGNET_REF=4b1f07d3cc92ac68aee3c1aad6e995651173adfc
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
