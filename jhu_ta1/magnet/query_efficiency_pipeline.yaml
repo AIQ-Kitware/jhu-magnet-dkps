@@ -24,7 +24,7 @@ nodes:
   # hashed relative to the run root, so the same card has the same identity
   # on every machine.
   materialize_lite:
-    class: magnet.containers.ContainerYamlProcessNode
+    class: magnet.process_node.MagnetProcessNode
     executable: 'python -m magnet.backends.helm.cli.materialize_helm_suite'
     algo_params:
       benchmark: lite
@@ -45,7 +45,7 @@ nodes:
     # --container_image, and MAGNET refuses such a run rather than report a
     # host result as a containerized one. This class is inert without an
     # image, so the host route is unchanged.
-    class: magnet.containers.ContainerYamlProcessNode
+    class: magnet.process_node.MagnetProcessNode
     executable: 'python -m jhu_ta1.magnet.query_efficiency'
     out_paths:
       out_fpath: 'query_efficiency.json'
