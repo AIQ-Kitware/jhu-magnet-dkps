@@ -180,6 +180,8 @@ def load_panel(suite_path, config):
 
 def load_panels(suite_path, manifest):
     """Load datasets and fix a target panel present on every requested dataset."""
+    if "target_models_by_dataset" in manifest:
+        raise ValueError("Use load_panels_by_dataset for dataset-specific targets")
     configs = manifest["datasets"]
     names = [entry["dataset"] for entry in configs]
     if not names or len(names) != len(set(names)):
@@ -192,3 +194,32 @@ def load_panels(suite_path, manifest):
             "Target models must be distinct and present on every requested dataset"
         )
     return panels, sorted(targets)
+
+
+def load_panels_by_dataset(suite_path, manifest):
+    """Load an explicit target roster for each dataset, or the common default.
+
+    A missing requested target is an input error, never an implicit omission.
+    Reference models and item alignment still come from each complete panel.
+    """
+    if "target_models_by_dataset" not in manifest:
+        panels, targets = load_panels(suite_path, manifest)
+        return panels, {panel.dataset: targets for panel in panels}
+    configs = manifest["datasets"]
+    names = [entry["dataset"] for entry in configs]
+    rosters = manifest["target_models_by_dataset"]
+    if (not names or len(names) != len(set(names))
+            or not isinstance(rosters, dict) or set(rosters) != set(names)
+            or "target_models" in manifest):
+        raise ValueError("Declare exactly one target roster per dataset, without target_models")
+    panels = [load_panel(suite_path, entry) for entry in configs]
+    targets = {}
+    for panel in panels:
+        roster = rosters[panel.dataset]
+        if (not isinstance(roster, list) or not roster
+                or not all(isinstance(model, str) for model in roster)
+                or len(roster) != len(set(roster))
+                or not set(roster) <= set(panel.models)):
+            raise ValueError(f"{panel.dataset}: targets must be distinct and present on this dataset")
+        targets[panel.dataset] = sorted(roster)
+    return panels, targets

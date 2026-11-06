@@ -43,6 +43,20 @@ suite), `split`, and `train_trial_index` (default 0). The manifest can also decl
 `target_models` and a `model_families` mapping. Otherwise, targets are all models
 common to the datasets, and family is the model ID's provider prefix before `/`.
 
+For datasets with different model availability, replace `target_models` with
+`target_models_by_dataset`: a mapping from every selected dataset name to its
+explicit, nonempty target-model list. Each requested model must have outputs on
+that dataset. Missing requested outputs are errors; models intentionally absent
+from a dataset are omitted from its roster before evaluation. Reference selection
+and item alignment remain local to each dataset.
+
+The number of settings is the sum of the roster sizes times the number of query
+budgets. `num_models` counts distinct targets across rosters, and `num_pairs`
+counts the declared dataset/model pairs. The common-model default is unchanged.
+An optional `target_groups` mapping names lists of evaluated models for diagnostic
+subgroup readouts. These groups do not alter fitting, the aggregate denominator,
+or the card's threshold.
+
 Items are aligned by their intersection across each dataset's model runs. Input
 text and references must agree. The benchmark truth is the item-score mean on
 that aligned pool. Scores must be finite and in [0, 1]; each item must have one
@@ -91,6 +105,9 @@ coverage, and input provenance. The neighboring `.trials.jsonl` records sampled
 query IDs, reference models, predictions, sample scores, and evaluation truth.
 The worker also accepts `--base_seed` and `--reference_models` (0 means all eligible
 references; a positive count samples references per target and replicate).
+`per_dataset` reports coverage and target counts separately for each dataset;
+`per_target_group` is included when groups were declared. Provenance records the
+resolved target roster for every dataset.
 
 Run the focused tests in an environment with DKPS and MAGNET installed:
 

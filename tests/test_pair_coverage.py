@@ -9,11 +9,12 @@ from unittest.mock import patch
 import numpy as np
 import yaml
 
-from jhu_ta1.magnet._helm_pair_data import load_panels
+from jhu_ta1.magnet._helm_pair_data import load_panels, load_panels_by_dataset
 from jhu_ta1.magnet.pair_coverage import (
     evaluate,
     predict,
     summarize_errors,
+    summarize_dataset_errors,
 )
 
 
@@ -59,6 +60,34 @@ class LivePairTests(unittest.TestCase):
             with self.subTest(budgets=budgets):
                 with self.assertRaisesRegex(ValueError, "distinct positive integers"):
                     evaluate("unused", {}, query_budgets=budgets)
+
+    def test_dataset_specific_reduction_counts_settings_instead_of_panel_means(self):
+        errors = [np.zeros((1, 3, 20)), np.full((1, 3, 1), 0.3)]
+        sample = [np.full((1, 3, 20), 0.1), np.full((1, 3, 1), 0.1)]
+        targets = {"a": [f"m{i}" for i in range(20)], "b": ["m0"]}
+        result = summarize_dataset_errors(errors, sample, ["a", "b"], targets, [1])
+        metrics = result["result"]["metrics"]
+        self.assertEqual(metrics["num_pairs"], 21)
+        self.assertEqual(metrics["num_settings"], 21)
+        self.assertEqual(metrics["num_models"], 20)
+        self.assertEqual(metrics["setting_improvement_fraction"], 20 / 21)
+        self.assertEqual(result["per_budget"][0]["num_pairs"], 21)
+        metrics.update(alpha=0.8, n_components_cmds=8, dkps_fits=63)
+        self.run_claim(metrics)
+        with self.assertRaisesRegex(ValueError, "same replicate count"):
+            summarize_dataset_errors([errors[0], errors[1][:, :2]],
+                                     [sample[0], sample[1][:, :2]], ["a", "b"], targets, [1])
+
+    def test_common_grid_reduction_is_unchanged(self):
+        rng = np.random.default_rng(42)
+        errors = rng.random((2, 4, 3, 5))
+        sample = rng.random(errors.shape)
+        models = [f"m{i}" for i in range(5)]
+        old = summarize_errors(errors, sample, ["a", "b"], models, [1, 2, 4, 8])
+        new = summarize_dataset_errors(errors, sample, ["a", "b"],
+                                       {"a": models, "b": models}, [1, 2, 4, 8])
+        for key in old:
+            self.assertEqual(old[key], new[key])
 
     def fixture(self, root):
         datasets = ["med_qa", "legalbench:subset=fixture"]
@@ -197,6 +226,50 @@ class LivePairTests(unittest.TestCase):
             path.write_text(json.dumps(data))
             with self.assertRaisesRegex(ValueError, "content differs"):
                 load_panels(root, manifest)
+
+    def test_dataset_specific_targets_execute_only_declared_combinations(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = self.fixture(root)
+            # An additional target has outputs on only the first dataset.
+            shutil.rmtree(root / "legalbench:subset=fixture,model=family0_model0")
+            panels, common = load_panels(root, manifest)
+            self.assertNotIn("family0/model0", common)
+            manifest["target_models_by_dataset"] = {
+                "med_qa": ["family0/model0", "family1/model4"],
+                "legalbench:subset=fixture": ["family1/model4"],
+            }
+            manifest["target_groups"] = {
+                "existing": ["family1/model4"], "additional": ["family0/model0"],
+            }
+            stream = io.StringIO()
+            result = evaluate(root, manifest, query_budgets=[1, 2],
+                              num_replicates=2, dimensions=2, trial_stream=stream)
+            metrics = result["result"]["metrics"]
+            self.assertEqual(metrics["num_models"], 2)
+            self.assertEqual(metrics["num_pairs"], 3)
+            self.assertEqual(metrics["num_settings"], 6)
+            self.assertEqual(metrics["dkps_fits"], 12)
+            rows = [json.loads(line) for line in stream.getvalue().splitlines()]
+            self.assertEqual(len(rows), 12)
+            self.assertEqual(sum(r["model"] == "family0/model0" for r in rows), 4)
+            self.assertFalse(any(r["model"] == "family0/model0" and r["dataset"].startswith("legalbench")
+                                 for r in rows))
+            for trial in rows:
+                self.assertTrue(all(m.split("/")[0] != trial["model"].split("/")[0]
+                                    for m in trial["reference_models"]))
+            self.assertEqual([r["num_settings"] for r in result["per_target_group"]], [4, 2])
+            self.assertEqual(result["protocol"]["targets_by_dataset"], manifest["target_models_by_dataset"])
+            # A requested missing target must be rejected, rather than silently
+            # disappearing into the denominator of the improvement fraction.
+            manifest["target_models_by_dataset"]["legalbench:subset=fixture"].append("family0/model0")
+            with self.assertRaisesRegex(ValueError, "present on this dataset"):
+                load_panels_by_dataset(root, manifest)
+            del manifest["target_models_by_dataset"]["legalbench:subset=fixture"]
+            with self.assertRaisesRegex(ValueError, "exactly one target roster"):
+                load_panels_by_dataset(root, manifest)
 
     def test_live_evaluation_fits_dkps_and_holds_out_families(self):
         from dkps.dkps import DataKernelPerspectiveSpace

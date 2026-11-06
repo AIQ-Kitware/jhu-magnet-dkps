@@ -6,7 +6,7 @@ description: |
     expected absolute score-estimation error than the same-budget sample mean.
 
   EVALUATION
-    1. Select datasets from a HELM suite, a common set of target models,
+    1. Select datasets from a HELM suite, declared target models per dataset,
        and query budgets before evaluating outcomes.
     2. For each (dataset, target model, query budget m), repeatedly draw
        random samples of m queries.
@@ -110,7 +110,10 @@ claim:
         and m.num_replicates >= 2
     ), 'Need datasets, target models, and at least two replicates'
 
-    expected_settings = m.num_datasets * m.num_models * len(budgets)
+    assert 0 < m.num_pairs <= m.num_datasets * m.num_models, (
+        'Need declared dataset/model pairs within the dataset/model population'
+    )
+    expected_settings = m.num_pairs * len(budgets)
     print(
         f'Completed: {m.num_settings}/{expected_settings} combinations, '
         f'{m.dkps_fits} DKPS fits'

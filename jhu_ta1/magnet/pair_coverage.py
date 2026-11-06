@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from jhu_ta1.magnet._helm_pair_data import file_hash, load_panels
+from jhu_ta1.magnet._helm_pair_data import file_hash, load_panels, load_panels_by_dataset
 
 
 def eligible_references(models, target, family_map):
@@ -164,11 +164,55 @@ def summarize_errors(
     }
 
 
+def summarize_dataset_errors(dkps_errors, sample_errors, datasets, targets, query_budgets):
+    """Count declared settings across datasets with different target rosters.
+
+    Each dataset supplies a budget × replicate × target array. Every declared
+    entry must be finite; structural absence never becomes a failed trial or
+    a zero error. Pool setting counts, rather than averaging panel percentages.
+    """
+    if not datasets or len(datasets) != len(set(datasets)) or set(targets) != set(datasets):
+        raise ValueError("Expected one target roster per distinct dataset")
+    if len(dkps_errors) != len(datasets) or len(sample_errors) != len(datasets):
+        raise ValueError("Expected paired errors for every dataset")
+    parts = [
+        summarize_errors(
+            np.asarray(dkps)[None], np.asarray(sample)[None],
+            [dataset], targets[dataset], query_budgets,
+        )
+        for dataset, dkps, sample in zip(datasets, dkps_errors, sample_errors)
+    ]
+    replicates = {part["result"]["metrics"]["num_replicates"] for part in parts}
+    if len(replicates) != 1:
+        raise ValueError("All datasets must use the same replicate count")
+    metrics = dict(parts[0]["result"]["metrics"])
+    for key in ("num_pairs", "num_settings", "settings_improved"):
+        metrics[key] = sum(part["result"]["metrics"][key] for part in parts)
+    metrics.update(
+        num_datasets=len(datasets),
+        num_models=len(set().union(*(set(roster) for roster in targets.values()))),
+        setting_improvement_fraction=metrics["settings_improved"] / metrics["num_settings"],
+    )
+    per_budget = []
+    for index, budget in enumerate(query_budgets):
+        improved = sum(part["per_budget"][index]["pairs_improved"] for part in parts)
+        per_budget.append(dict(n_eval=budget, num_pairs=metrics["num_pairs"],
+                               pairs_improved=improved,
+                               pair_improvement_fraction=improved / metrics["num_pairs"]))
+    return {
+        "result": {"metrics": metrics},
+        "per_setting": [row for part in parts for row in part["per_setting"]],
+        "per_budget": per_budget,
+        "per_dataset": [dict(dataset=dataset, **part["result"]["metrics"])
+                        for dataset, part in zip(datasets, parts)],
+    }
+
+
 def reference_banks(panels, targets, family_map, reference_models, dimensions):
     """Validate every reference bank before starting any embeddings or fits."""
     banks = {}
     for panel in panels:
-        for target in targets:
+        for target in (targets[panel.dataset] if isinstance(targets, dict) else targets):
             references = eligible_references(panel.models, target, family_map)
             count = reference_models or len(references)
             if not max(2, dimensions) <= count <= len(references):
@@ -213,7 +257,20 @@ def evaluate(
     ):
         raise ValueError("Invalid estimator or replicate settings")
 
-    panels, targets = load_panels(suite_path, manifest)
+    if "target_models_by_dataset" in manifest:
+        panels, targets_by_dataset = load_panels_by_dataset(suite_path, manifest)
+        targets = sorted(set().union(*(set(v) for v in targets_by_dataset.values())))
+    else:
+        panels, targets = load_panels(suite_path, manifest)
+        targets_by_dataset = {panel.dataset: targets for panel in panels}
+    groups = manifest.get("target_groups", {})
+    if not isinstance(groups, dict) or any(
+        not isinstance(roster, list) or not roster
+        or not all(isinstance(model, str) for model in roster)
+        or len(roster) != len(set(roster)) or not set(roster) <= set(targets)
+        for roster in groups.values()
+    ):
+        raise ValueError("Target groups must contain distinct evaluated models")
     for panel in panels:
         if max(query_budgets) > panel.pool_size:
             raise ValueError(
@@ -221,7 +278,7 @@ def evaluate(
             )
     banks = reference_banks(
         panels,
-        targets,
+        targets_by_dataset,
         manifest.get("model_families", {}),
         reference_models,
         dimensions,
@@ -237,14 +294,16 @@ def evaluate(
         embedding_cache.validate(panels)
 
     # Each combination retains its own replicate errors until the final reduction.
-    shape = (len(panels), len(query_budgets), num_replicates, len(targets))
-    dkps_errors = np.empty(shape)
-    sample_errors = np.empty(shape)
+    shapes = [(len(query_budgets), num_replicates, len(targets_by_dataset[p.dataset]))
+              for p in panels]
+    dkps_errors = [np.empty(shape) for shape in shapes]
+    sample_errors = [np.empty(shape) for shape in shapes]
     fits = 0
     embedding_batches = 0
     cached_embedding_batches = 0
 
     for dataset_index, panel in enumerate(panels):
+        panel_targets = targets_by_dataset[panel.dataset]
         full_scores = {
             model: float(panel.scores[model].mean()) for model in panel.models
         }
@@ -266,7 +325,7 @@ def evaluate(
                     embeddings = embed_queries(panel, indices, embed_provider, embed_model)
                 embedding_batches += 1
 
-                for model_index, target in enumerate(targets):
+                for model_index, target in enumerate(panel_targets):
                     references = banks[panel.dataset, target]
                     if reference_models:
                         reference_rng = np.random.default_rng(
@@ -298,9 +357,9 @@ def evaluate(
 
                     # Evaluation only; never passed to predict.
                     truth = full_scores[target]
-                    index = (dataset_index, budget_index, replicate, model_index)
-                    dkps_errors[index] = abs(prediction - truth)
-                    sample_errors[index] = abs(sample_mean - truth)
+                    index = (budget_index, replicate, model_index)
+                    dkps_errors[dataset_index][index] = abs(prediction - truth)
+                    sample_errors[dataset_index][index] = abs(sample_mean - truth)
                     if trial_stream is not None:
                         trial = {
                             "dataset": panel.dataset,
@@ -323,13 +382,23 @@ def evaluate(
                         flush=True,
                     )
 
-    result = summarize_errors(
+    result = summarize_dataset_errors(
         dkps_errors,
         sample_errors,
         [panel.dataset for panel in panels],
-        targets,
+        targets_by_dataset,
         query_budgets,
     )
+    if groups:
+        result["per_target_group"] = []
+        for name, roster in groups.items():
+            selected = set(roster)
+            rows = [row for row in result["per_setting"] if row["model"] in selected]
+            improved = sum(row["expected_gain"] > 0 for row in rows)
+            result["per_target_group"].append(dict(
+                group=name, num_models=len(selected), num_settings=len(rows),
+                settings_improved=improved, setting_improvement_fraction=improved / len(rows),
+            ))
     counts = [reference_models or len(references) for references in banks.values()]
     result["result"]["metrics"].update(
         alpha=alpha,
@@ -344,6 +413,7 @@ def evaluate(
         "estimator": "alpha*sample_score + (1-alpha)*clipped_OLS_DKPS_prediction",
         "holdout": "provider family, or supplied model_families mapping",
         "targets": targets,
+        "targets_by_dataset": targets_by_dataset,
         "dataset_manifest": manifest,
         "base_seed": base_seed,
         "query_budgets": list(query_budgets),
