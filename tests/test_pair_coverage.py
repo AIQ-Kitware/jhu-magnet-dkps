@@ -393,6 +393,61 @@ class LivePairTests(unittest.TestCase):
             self.assertEqual({r["n_eval"] for r in rows}, {1, 2})
             self.assertTrue(all(len(r["query_ids"]) == r["n_eval"] for r in rows))
 
+    def test_measurements_preserve_predictions_and_retained_inputs_support_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = self.fixture(root)
+            manifest["target_models_by_dataset"] = {
+                manifest["datasets"][0]["dataset"]: ["family0/model0"],
+                manifest["datasets"][1]["dataset"]: ["family0/model0", "family1/model4"],
+            }
+            before, after, batches = io.StringIO(), io.StringIO(), io.StringIO()
+            kwargs = dict(query_budgets=[1, 2], num_replicates=2, dimensions=2)
+            original = evaluate(root, manifest, trial_stream=before, **kwargs)
+            measured = evaluate(root, manifest, trial_stream=after,
+                                record_measurements=True, batch_stream=batches, **kwargs)
+            for key, value in original["result"]["metrics"].items():
+                self.assertEqual(measured["result"]["metrics"][key], value)
+            self.assertNotIn("measurements", original)
+            trials = [json.loads(line) for line in after.getvalue().splitlines()]
+            prior = [json.loads(line) for line in before.getvalue().splitlines()]
+            batch_rows = [json.loads(line) for line in batches.getvalue().splitlines()]
+            by_batch = {row["batch_id"]: row for row in batch_rows}
+            sources = {row["dataset"]: row for row in measured["protocol"]["sources"]}
+            for old, new in zip(prior, trials):
+                for key, value in old.items():
+                    self.assertEqual(new[key], value)
+                self.assertEqual(np.mean(new["target_query_scores"]), new["sample_score"])
+                bank = sources[new["dataset"]]["full_scores"]
+                self.assertNotIn(new["model"], new["reference_models"])
+                # A cheap reference-mean control can now be replayed from the
+                # retained evidence without reopening the original HELM bank.
+                control = .8 * new["sample_score"] + .2 * np.mean(
+                    [bank[model] for model in new["reference_models"]])
+                self.assertTrue(np.isfinite(control))
+                self.assertEqual(by_batch[new["batch_id"]]["query_ids"], new["query_ids"])
+                self.assertEqual(new["raw_prediction"],
+                                 np.clip(new["diagnostics"]["unclipped_prediction"], 0, 1))
+            self.assertEqual(len(trials), 12)
+            self.assertEqual(len(batch_rows), 8)  # shared across unequal target rosters
+            report = measured["measurements"]
+            self.assertEqual(report["representation_requested_rows"], 144)
+            unique = {}
+            for row in batch_rows:
+                unique.setdefault(row["dataset"], set()).update(row["query_ids"])
+                self.assertEqual(row["representation"], "one_hot")
+                self.assertGreater(row["array_bytes"], 0)
+            self.assertEqual(report["representation_unique_response_rows"],
+                             sum(map(len, unique.values())) * 12)
+            shared = sum(row["stages"]["shared_representation"]["wall_seconds"]
+                         for row in batch_rows)
+            self.assertAlmostEqual(report["stages"]["shared_representation"]["wall_seconds"], shared)
+            self.assertIsNone(report["acquisition"]["original_generation_seconds"])
+            self.assertIn("jhu_ta1.magnet.pair_coverage", report["runtime"]["sources"])
+            for value in report["stages"].values():
+                self.assertGreaterEqual(value["wall_seconds"], 0)
+                self.assertGreaterEqual(value["process_cpu_seconds"], 0)
+
     def test_card_requires_complete_fixed_alpha_setting_coverage(self):
         root = Path(__file__).resolve().parents[1]
         card = yaml.safe_load(

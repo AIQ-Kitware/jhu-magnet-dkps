@@ -21,3 +21,4 @@ nodes:
       embed_provider: sentence-transformers
       embed_model: nomic-ai/nomic-embed-text-v2-moe
       run_id: live-settings-v2
+      record_measurements: 0

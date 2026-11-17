@@ -74,6 +74,8 @@ def main(argv=None):
         "--container_docker_args", default="", help="For example: --gpus device=0"
     )
     parser.add_argument("--num_replicates", type=int, default=1024)
+    parser.add_argument("--record_measurements", action="store_true",
+                        help="Retain replay timing and comparison inputs")
     parser.add_argument("--queries", nargs="+", type=int, default=[1, 2, 4, 8])
     parser.add_argument(
         "--embed_model", help="Embedding model name or local weights path"
@@ -131,6 +133,8 @@ def main(argv=None):
     if args.embed_model:
         matrix["pair_coverage.embed_model"] = args.embed_model
     matrix["pair_coverage.embed_provider"] = args.embed_provider
+    if args.record_measurements:
+        matrix["pair_coverage.record_measurements"] = 1
     if args.embedding_cache_path:
         cache = args.embedding_cache_path.resolve()
         if not (cache / "index.json").is_file():

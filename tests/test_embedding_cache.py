@@ -85,6 +85,11 @@ class EmbeddingCacheTests(unittest.TestCase):
             panel, vectors = self.fixture(root)
             cache = CachedResponseEmbeddings(root, "google", "gemini-embedding-001")
             cache.validate([panel])
+            snapshot = cache.measurement_snapshot()
+            self.assertEqual(snapshot["validated_chunks"], 1)
+            self.assertEqual(snapshot["validated_chunk_storage_bytes"],
+                             (root / "chunks/batch.npy").stat().st_size)
+            self.assertIsNone(snapshot["physical_disk_read_bytes"])
             actual = cache.embed_queries(panel, [2, 0])
             np.testing.assert_array_equal(
                 actual[panel.models[0]], vectors[[2, 0], None, :]

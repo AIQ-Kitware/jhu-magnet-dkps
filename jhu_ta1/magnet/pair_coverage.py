@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from jhu_ta1.magnet._helm_pair_data import file_hash, load_panels, load_panels_by_dataset
+from jhu_ta1.magnet._measurements import ReplayMeasurements, measure
 
 
 def eligible_references(models, target, family_map):
@@ -49,7 +50,8 @@ def embed_queries(panel, indices, provider, model):
 
 
 def predict(
-    embeddings, reference_scores, target, target_query_scores, *, dimensions, alpha
+    embeddings, reference_scores, target, target_query_scores, *, dimensions, alpha,
+    diagnostics=None,
 ):
     """Return DKPS, sample-mean, and raw predictions without full target scores."""
     from dkps.dkps import DataKernelPerspectiveSpace
@@ -62,21 +64,27 @@ def predict(
         )
 
     selected = {model: embeddings[model] for model in sorted([*references, target])}
-    coordinates = DataKernelPerspectiveSpace(
-        n_components_cmds=dimensions
-    ).fit_transform(selected, return_dict=True)
-    regressor = LinearRegression().fit(
-        np.vstack([coordinates[model] for model in references]),
-        np.array([reference_scores[model] for model in references]),
-    )
-    raw_prediction = float(
-        np.clip(regressor.predict(coordinates[target][None])[0], 0, 1)
-    )
+    stages = {} if diagnostics is not None else None
+    with measure(stages, "dkps_geometry"):
+        coordinates = DataKernelPerspectiveSpace(
+            n_components_cmds=dimensions
+        ).fit_transform(selected, return_dict=True)
+    with measure(stages, "regression_fit"):
+        regressor = LinearRegression().fit(
+            np.vstack([coordinates[model] for model in references]),
+            np.array([reference_scores[model] for model in references]),
+        )
+    with measure(stages, "regression_predict"):
+        unclipped = float(regressor.predict(coordinates[target][None])[0])
+        raw_prediction = float(np.clip(unclipped, 0, 1))
     # ^ Note: We're assuming all metrics are in [0, 1]
     
     # ensemble DKPS prediction w/ sample mean
-    sample_mean = float(np.mean(target_query_scores))
-    prediction  = alpha * sample_mean + (1 - alpha) * raw_prediction
+    with measure(stages, "sample_mean_and_blend"):
+        sample_mean = float(np.mean(target_query_scores))
+        prediction = alpha * sample_mean + (1 - alpha) * raw_prediction
+    if diagnostics is not None:
+        diagnostics.update(stages=stages, unclipped_prediction=unclipped)
     
     return prediction, sample_mean, raw_prediction
 
@@ -238,9 +246,13 @@ def evaluate(
     embed_model="nomic-ai/nomic-embed-text-v2-moe",
     embedding_cache_path=None,
     trial_stream=None,
+    record_measurements=False,
+    batch_stream=None,
 ):
     """Load HELM once, evaluate every requested combination, and summarize errors."""
     from dkps.helm import uses_onehot
+    recorder = ReplayMeasurements(batch_stream) if record_measurements else None
+    stages = recorder.stages if recorder else None
 
     if (
         not query_budgets
@@ -257,12 +269,13 @@ def evaluate(
     ):
         raise ValueError("Invalid estimator or replicate settings")
 
-    if "target_models_by_dataset" in manifest:
-        panels, targets_by_dataset = load_panels_by_dataset(suite_path, manifest)
-        targets = sorted(set().union(*(set(v) for v in targets_by_dataset.values())))
-    else:
-        panels, targets = load_panels(suite_path, manifest)
-        targets_by_dataset = {panel.dataset: targets for panel in panels}
+    with measure(stages, "load_saved_panels"):
+        if "target_models_by_dataset" in manifest:
+            panels, targets_by_dataset = load_panels_by_dataset(suite_path, manifest)
+            targets = sorted(set().union(*(set(v) for v in targets_by_dataset.values())))
+        else:
+            panels, targets = load_panels(suite_path, manifest)
+            targets_by_dataset = {panel.dataset: targets for panel in panels}
     groups = manifest.get("target_groups", {})
     if not isinstance(groups, dict) or any(
         not isinstance(roster, list) or not roster
@@ -288,10 +301,11 @@ def evaluate(
     if embedding_cache_path:
         from jhu_ta1.magnet._embedding_cache import CachedResponseEmbeddings
 
-        embedding_cache = CachedResponseEmbeddings(
-            embedding_cache_path, embed_provider, embed_model
-        )
-        embedding_cache.validate(panels)
+        with measure(stages, "cache_open_and_validation"):
+            embedding_cache = CachedResponseEmbeddings(
+                embedding_cache_path, embed_provider, embed_model
+            )
+            embedding_cache.validate(panels)
 
     # Each combination retains its own replicate errors until the final reduction.
     shapes = [(len(query_budgets), num_replicates, len(targets_by_dataset[p.dataset]))
@@ -317,12 +331,21 @@ def evaluate(
                     query_rng.choice(panel.pool_size, budget, replace=False)
                 )
                 
-                # load embeddings
-                if embedding_cache is not None and not uses_onehot(panel.dataset):
-                    embeddings = embedding_cache.embed_queries(panel, indices)
-                    cached_embedding_batches += 1
-                else:
-                    embeddings = embed_queries(panel, indices, embed_provider, embed_model)
+                batch_stages = {} if recorder else None
+                representation = ("one_hot" if uses_onehot(panel.dataset) else
+                                  "exported_cache" if embedding_cache is not None else
+                                  "embedding_helper")
+                with measure(batch_stages, "shared_representation"):
+                    if representation == "exported_cache":
+                        embeddings = embedding_cache.embed_queries(panel, indices)
+                        cached_embedding_batches += 1
+                    else:
+                        embeddings = embed_queries(panel, indices, embed_provider, embed_model)
+                if recorder:
+                    batch_id = recorder.batch(
+                        panel, indices, embeddings, representation, batch_stages,
+                        panel_targets, budget, replicate,
+                    )
                 embedding_batches += 1
 
                 for model_index, target in enumerate(panel_targets):
@@ -345,6 +368,7 @@ def evaluate(
                         [seed, dataset_index, model_index, 2]
                     )
                     np.random.seed(fit_seed.generate_state(1)[0])
+                    diagnostics = {} if recorder else None
                     prediction, sample_mean, raw_prediction = predict(
                         embeddings,
                         {model: full_scores[model] for model in references},
@@ -352,7 +376,10 @@ def evaluate(
                         panel.scores[target][indices],
                         dimensions=dimensions,
                         alpha=alpha,
+                        **({"diagnostics": diagnostics} if recorder else {}),
                     )
+                    if recorder:
+                        recorder.add_stages(diagnostics["stages"])
                     fits += 1
 
                     # Evaluation only; never passed to predict.
@@ -373,7 +400,17 @@ def evaluate(
                             "sample_score": sample_mean,
                             "truth": truth,
                         }
+                        if recorder:
+                            trial.update(
+                                measurement_schema_version=1,
+                                batch_id=batch_id,
+                                metric=panel.metric,
+                                target_query_scores=panel.scores[target][indices].tolist(),
+                                diagnostics=diagnostics,
+                            )
                         trial_stream.write(json.dumps(trial, allow_nan=False) + "\n")
+                if recorder and trial_stream is not None:
+                    trial_stream.flush()
 
                 if (replicate + 1) % 32 == 0 or replicate == num_replicates - 1:
                     print(
@@ -444,6 +481,23 @@ def evaluate(
             "provider": embed_provider,
             "model": embed_model,
         }
+    if recorder:
+        # Saved full scores are evaluator/reference-bank evidence. They are
+        # never an additional target input to the predictor.
+        for source, panel in zip(result["protocol"]["sources"], panels):
+            source["full_scores"] = {
+                model: float(panel.scores[model].mean()) for model in panel.models
+            }
+        result["measurements"] = recorder.summary()
+        if embedding_cache is not None:
+            result["measurements"]["embedding_cache"] = embedding_cache.measurement_snapshot()
+        metrics = result["result"]["metrics"]
+        metrics["replay_wall_seconds"] = result["measurements"]["elapsed_wall_seconds"]
+        metrics["replay_process_cpu_seconds"] = result["measurements"]["process_cpu_seconds"]
+        metrics["representation_requested_rows"] = recorder.requested_rows
+        metrics["representation_unique_response_rows"] = result["measurements"]["representation_unique_response_rows"]
+        for name, values in recorder.stages.items():
+            metrics[f"{name}_wall_seconds"] = values["wall_seconds"]
     return result
 
 
@@ -475,6 +529,8 @@ def main(argv=None):
         help="Execution identifier; does not affect random seeds",
     )
     parser.add_argument("--out_fpath", default="pair_coverage.json")
+    parser.add_argument("--record_measurements", type=int, choices=(0, 1), default=0,
+                        help="Retain replay costs, fit diagnostics and comparison inputs")
     args = parser.parse_args(argv)
     try:
         query_budgets = [int(value) for value in args.query_budgets.split(",")]
@@ -496,7 +552,10 @@ def main(argv=None):
 
     # Embedding helpers may cache text embeddings. Keep their writes in the job
     # directory, including when the checkout and HELM data are read-only mounts.
-    with contextlib.chdir(output.parent), trial_path.open("w") as stream:
+    batch_path = output.with_suffix(".batches.jsonl")
+    with (contextlib.chdir(output.parent), trial_path.open("w") as stream,
+          contextlib.ExitStack() as stack):
+        batch_stream = stack.enter_context(batch_path.open("w")) if args.record_measurements else None
         payload = evaluate(
             suite,
             manifest,
@@ -510,12 +569,19 @@ def main(argv=None):
             embed_model=args.embed_model,
             embedding_cache_path=embedding_cache_path,
             trial_stream=stream,
+            record_measurements=bool(args.record_measurements),
+            batch_stream=batch_stream,
         )
     payload["protocol"].update(
         dataset_manifest_sha256=file_hash(manifest_path),
         run_id=args.run_id,
         trial_file=trial_path.name,
     )
+    if args.record_measurements:
+        payload["protocol"]["measurement_files"] = {
+            "trials": {"path": trial_path.name, "sha256": file_hash(trial_path)},
+            "batches": {"path": batch_path.name, "sha256": file_hash(batch_path)},
+        }
     output.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n")
     print(json.dumps(payload["result"]["metrics"], indent=2))
 

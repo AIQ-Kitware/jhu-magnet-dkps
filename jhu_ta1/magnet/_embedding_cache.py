@@ -26,6 +26,7 @@ class CachedResponseEmbeddings:
         if self.index["format_version"] != 1:
             raise ValueError("Unsupported response embedding cache format")
         self._chunk = lru_cache(maxsize=128)(self._load_chunk)
+        self._validated_chunks = set()
 
     def _load_chunk(self, name):
         path = (self.directory / "chunks" / name).resolve()
@@ -75,6 +76,22 @@ class CachedResponseEmbeddings:
                 digest = hashlib.file_digest(stream, "sha256").hexdigest()
             if digest != self.index["chunk_sha256"][name]:
                 raise ValueError(f"Embedding chunk checksum mismatch: {name}")
+        self._validated_chunks = chunks
+
+    def measurement_snapshot(self):
+        """Report logical storage and mmap cache activity, not physical I/O."""
+        info = self._chunk.cache_info()
+        return {
+            "index_bytes": self.index_path.stat().st_size,
+            "validated_chunks": len(self._validated_chunks),
+            "validated_chunk_storage_bytes": sum(
+                (self.directory / "chunks" / name).stat().st_size
+                for name in self._validated_chunks),
+            "chunk_mmap_cache_hits": info.hits,
+            "chunk_mmap_cache_misses": info.misses,
+            "physical_disk_read_bytes": None,
+            "scope": "validation and prediction access combined; mmap counters are not disk reads",
+        }
 
     def embed_queries(self, panel, indices):
         result = {}

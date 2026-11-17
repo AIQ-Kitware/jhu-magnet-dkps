@@ -36,6 +36,7 @@ nodes:
       embed_provider    : sentence-transformers
       embed_model       : nomic-ai/nomic-embed-text-v2-moe # [Note] Stronger embedding models like Gemini work better, but this runs locally.
       run_id            : jhu-dkps-pair-coverage-000
+      record_measurements: 0       # Opt-in replay timing and comparison evidence.
 
 edges:
   - materialize_lite.suite_dpath -> pair_coverage.helm_suite_path
