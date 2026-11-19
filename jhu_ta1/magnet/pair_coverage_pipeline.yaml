@@ -38,5 +38,14 @@ nodes:
       run_id            : jhu-dkps-pair-coverage-000
       record_measurements: 0       # Opt-in replay timing and comparison evidence.
 
+  impact_readout:
+    class: magnet.process_node.MagnetProcessNode
+    executable: 'python -m jhu_ta1.magnet.impact_readout'
+    in_paths: [source_fpath, precompute_fpath]
+    out_paths: {out_fpath: impact_readout.json}
+    primary_out_key: out_fpath
+    algo_params: {tolerance: 0.05, required_fraction: 0.95, readout_version: 1, recover_request_times: 0}
+
 edges:
   - materialize_lite.suite_dpath -> pair_coverage.helm_suite_path
+  - pair_coverage.out_fpath -> impact_readout.source_fpath

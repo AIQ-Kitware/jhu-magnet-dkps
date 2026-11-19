@@ -65,6 +65,7 @@ links:
 kwdagger:
   pipeline: ../magnet/pair_coverage_pipeline.yaml
   result_node: pair_coverage
+  readout_nodes: [impact_readout]
   matrix:
     pair_coverage.dataset_manifest : jhu_ta1/cards/manifest_full.json
 symbols:
@@ -79,6 +80,102 @@ symbols:
         objective: maximize
         aggregation_strategy:
           type: 'mean'
+  metrics.impact_readout.quality_summary:
+    metadata:
+      display_name: Absolute prediction error and precision
+      display: true
+      description: Equal target-weight summaries by dataset, method and tested query budget. Units follow the dataset scoring metric. Observed rates do not guarantee new-model performance.
+      columns:
+        dataset: {display_name: Dataset}
+        method: {display_name: Estimator}
+        query_budget: {display_name: Target queries, unit: queries}
+        mean_target_mae: {display_name: Mean target MAE, unit: score}
+        mean_target_fraction_within: {display_name: Mean within-tolerance fraction, unit: '1'}
+        n_targets: {display_name: Observed targets, unit: models}
+  metrics.impact_readout.quality_by_model_fpath:
+    metadata:
+      display_name: Per-target error and precision
+      display: false
+      format: jsonl
+      columns:
+        dataset: {display_name: Dataset}
+        model: {display_name: Target}
+        method: {display_name: Estimator}
+        query_budget: {display_name: Target queries, unit: queries}
+        mae: {display_name: MAE, unit: score}
+        error_q95: {display_name: P95 absolute error, unit: score}
+        fraction_within_tolerance: {display_name: Observed within-tolerance fraction, unit: '1'}
+        within_wilson_lower: {display_name: Wilson lower bound over query draws, unit: '1'}
+        within_wilson_upper: {display_name: Wilson upper bound over query draws, unit: '1'}
+  metrics.impact_readout.precision_frontier_fpath:
+    metadata:
+      display_name: Tested query budgets at declared precision
+      display: false
+      format: jsonl
+      description: Ratios compare minimum tested budgets reaching an observed within-tolerance fraction on the same target. Not compute, latency or dollar savings. Unreached criteria retain null ratios.
+      columns:
+        dataset: {display_name: Dataset}
+        model: {display_name: Target}
+        method: {display_name: Estimator}
+        status: {display_name: Tested-range status}
+        query_ratio: {display_name: Sampling / method query budget, unit: '1'}
+  metrics.impact_readout.stage_timings:
+    metadata:
+      display_name: Replay and representation preparation timings
+      display: true
+      columns:
+        scope: {display_name: Measured workload}
+        stage: {display_name: Stage}
+        wall_seconds: {display_name: Client elapsed time, unit: s}
+        process_cpu_seconds: {display_name: Process CPU time, unit: s}
+  metrics.impact_readout.fit_timings:
+    metadata:
+      display_name: One estimator invocation overhead
+      display: true
+      description: Includes predictor imports/setup, geometry, regression and blend; excludes shared representation, original generation and grading. First calls may include warmup.
+      columns:
+        dataset: {display_name: Dataset}
+        query_budget: {display_name: Target queries, unit: queries}
+        n_timed_fits: {display_name: Timed fits, unit: fits}
+        median_fit_wall_seconds: {display_name: Median fit elapsed time, unit: s}
+        p95_fit_wall_seconds: {display_name: P95 fit elapsed time, unit: s}
+  metrics.impact_readout.trial_times_fpath:
+    metadata:
+      display_name: Individual fit timings and shared-batch joins
+      display: false
+      format: jsonl
+      description: Shared representation time is a join reference; count each batch once. Not one measured end-to-end target evaluation.
+      columns:
+        dataset: {display_name: Dataset}
+        model: {display_name: Target}
+        seed: {display_name: Query draw seed}
+        batch_id: {display_name: Shared representation batch}
+        fit_wall_seconds: {display_name: Estimator elapsed time, unit: s}
+        shared_representation_wall_seconds: {display_name: Shared representation time, unit: s}
+  metrics.impact_readout.replay_scope:
+    metadata:
+      display_name: Cost observation scope and missing acquisition work
+      display: true
+      description: Audit runtime covers repeated budgets/targets/draws. Original generation/grading and reference acquisition remain unknown. No end-to-end savings factor is inferred.
+      columns:
+        observed_trials: {display_name: Observed saved trials, unit: trials}
+        timed_fits: {display_name: Fits with elapsed timings, unit: fits}
+        replay_wall_seconds: {display_name: Audit elapsed time, unit: s}
+        net_savings_factor: {display_name: End-to-end savings factor, unit: '1'}
+  metrics.impact_readout.request_times_fpath:
+    metadata:
+      display_name: Recorded HELM request durations
+      display: false
+      format: jsonl
+      description: Optional recovery of original saved client metadata for declared targets. Cache flags and timestamps are retained. Does not measure judge/grading time or exclusive device compute, and is not automatically restricted to the aligned evaluation pool.
+      columns:
+        dataset: {display_name: Dataset}
+        model: {display_name: Target}
+        instance_id: {display_name: Item ID}
+        request_wall_seconds_reported: {display_name: Reported client request time, unit: s}
+        cached_reported: {display_name: Reported cache flag}
+        success_reported: {display_name: Reported request status}
+        request_datetime: {display_name: Reported request timestamp}
 claim:
   python: |
     m = metrics.pair_coverage

@@ -27,6 +27,7 @@ import numpy as np
 
 from jhu_ta1.magnet._embedding_cache import response_hash
 from jhu_ta1.magnet._helm_pair_data import file_hash, load_panel
+from jhu_ta1.magnet._measurements import measure, runtime_provenance
 
 FORMAT_VERSION = 1
 CHUNK_SIZE = 50
@@ -112,7 +113,8 @@ def _save_chunk(path, vectors):
     os.replace(scratch, path)
 
 
-def embed_panel(panel, cache_dpath, index, embed, *, provider, model, chunk_size):
+def embed_panel(panel, cache_dpath, index, embed, *, provider, model, chunk_size,
+                measurement_stream=None, measurements=None):
     """Embed one panel into the cache and record it in `index` (in memory)."""
     entries = list(pool_entries(panel))
     texts = [str(panel.responses[m][i]) for m, _, i in entries]
@@ -125,17 +127,22 @@ def embed_panel(panel, cache_dpath, index, embed, *, provider, model, chunk_size
         chunk_texts = texts[start : start + chunk_size]
         name = chunk_name(provider, model, chunk_texts)
         path = chunks_dpath / name
-        if not path.is_file():
-            vectors = np.asarray(embed(chunk_texts))
+        reused = path.is_file()
+        stages = {} if measurements is not None else None
+        if not reused:
+            with measure(stages, "embed_function"):
+                vectors = np.asarray(embed(chunk_texts))
             if vectors.shape[0] != len(chunk_texts) or vectors.ndim != 2:
                 raise ValueError(
                     f"Embedder returned {vectors.shape} for {len(chunk_texts)} texts"
                 )
             if not np.isfinite(vectors).all():
                 raise ValueError(f"{panel.dataset}: non-finite embeddings")
-            _save_chunk(path, vectors)
+            with measure(stages, "save_chunk"):
+                _save_chunk(path, vectors)
             embedded += len(chunk_texts)
-        vectors = np.load(path, mmap_mode="r", allow_pickle=False)
+        with measure(stages, "open_chunk"):
+            vectors = np.load(path, mmap_mode="r", allow_pickle=False)
         if vectors.shape != (len(chunk_texts), vectors.shape[-1]):
             raise ValueError(f"Chunk {name} has the wrong shape {vectors.shape}")
         if dimensions is None:
@@ -144,7 +151,17 @@ def embed_panel(panel, cache_dpath, index, embed, *, provider, model, chunk_size
             raise ValueError(
                 f"Chunk {name} has {vectors.shape[1]} dimensions, expected {dimensions}"
             )
-        hashes[name] = file_hash(path)
+        with measure(stages, "hash_chunk"):
+            hashes[name] = file_hash(path)
+        if measurements is not None:
+            row = {"kind": "embedding_chunk", "dataset": panel.dataset,
+                   "chunk": name, "reused": reused, "requested_rows": len(chunk_texts),
+                   "embed_function_calls": int(not reused), "array_bytes": vectors.nbytes,
+                   "stored_bytes": path.stat().st_size, "stages": stages}
+            measurements["chunks"].append(row)
+            if measurement_stream is not None:
+                measurement_stream.write(json.dumps(row, allow_nan=False) + "\n")
+                measurement_stream.flush()
         for offset, (entry, text) in enumerate(
             zip(entries[start : start + chunk_size], chunk_texts)
         ):
@@ -187,6 +204,8 @@ def precompute(
     datasets=None,
     chunk_size=CHUNK_SIZE,
     force=False,
+    record_measurements=False,
+    measurement_stream=None,
 ):
     """Embed the requested datasets. `embed_factory()` builds the embedder lazily."""
     entries = manifest["datasets"]
@@ -204,6 +223,9 @@ def precompute(
     index = load_index(cache_dpath, provider, model)
     embed = None
     summary = {"embedded": [], "cached": [], "onehot": []}
+    wall_start, cpu_start = time.perf_counter(), time.process_time()
+    observations = {"stages": {}, "chunks": []} if record_measurements else None
+    stages = observations["stages"] if observations is not None else None
 
     for entry in entries:
         dataset = entry["dataset"]
@@ -211,13 +233,17 @@ def precompute(
             print(f"{dataset}: one-hot embeddings, nothing to cache", flush=True)
             summary["onehot"].append(dataset)
             continue
-        panel = load_panel(suite_path, entry)
-        if not force and is_complete(cache_dpath, index, panel):
+        with measure(stages, "load_saved_panel"):
+            panel = load_panel(suite_path, entry)
+        with measure(stages, "validate_existing_panel"):
+            complete = not force and is_complete(cache_dpath, index, panel)
+        if complete:
             print(f"{dataset}: already cached", flush=True)
             summary["cached"].append(dataset)
             continue
         if embed is None:
-            embedder = embed_factory()
+            with measure(stages, "initialize_encoder"):
+                embedder = embed_factory()
             embed = lambda texts: embedder.embed(texts, model)  # noqa: E731
         embed_panel(
             panel,
@@ -227,10 +253,21 @@ def precompute(
             provider=provider,
             model=model,
             chunk_size=chunk_size,
+            measurement_stream=measurement_stream,
+            measurements=observations,
         )
-        write_index(cache_dpath, index)
+        with measure(stages, "write_index"):
+            write_index(cache_dpath, index)
         summary["embedded"].append(dataset)
         print(f"{dataset}: cache updated ({cache_dpath})", flush=True)
+    if observations is not None:
+        observations.update(elapsed_wall_seconds=time.perf_counter() - wall_start,
+                            process_cpu_seconds=time.process_time() - cpu_start,
+                            scope="full-panel response representation preparation; excludes original generation/grading",
+                            embed_function_calls=sum(r["embed_function_calls"] for r in observations["chunks"]),
+                            reused_chunks=sum(r["reused"] for r in observations["chunks"]))
+        observations['runtime'] = runtime_provenance()
+        summary["measurements"] = observations
     return summary
 
 
@@ -266,24 +303,33 @@ def main(argv=None):
     parser.add_argument(
         "--force", action="store_true", help="Re-embed datasets already cached"
     )
+    parser.add_argument("--measurement_fpath", help="Opt-in JSON summary; a sibling JSONL retains completed chunk events")
     args = parser.parse_args(argv)
     if args.chunk_size < 1:
         parser.error("chunk_size must be positive")
 
     manifest = json.loads(Path(args.dataset_manifest).read_text())
     client_class, uses_onehot = _load_dkps()
-    summary = precompute(
-        Path(args.helm_suite_path).resolve(),
-        manifest,
-        Path(args.cache_dpath).resolve(),
-        client_class,
-        uses_onehot,
-        provider=args.embed_provider,
-        model=args.embed_model,
-        datasets=args.datasets,
-        chunk_size=args.chunk_size,
-        force=args.force,
-    )
+    with contextlib.ExitStack() as stack:
+        measurement_path = Path(args.measurement_fpath).resolve() if args.measurement_fpath else None
+        if measurement_path:
+            measurement_path.parent.mkdir(parents=True, exist_ok=True)
+        events = stack.enter_context(measurement_path.with_suffix('.chunks.jsonl').open('w')) if measurement_path else None
+        summary = precompute(
+            Path(args.helm_suite_path).resolve(),
+            manifest,
+            Path(args.cache_dpath).resolve(),
+            client_class,
+            uses_onehot,
+            provider=args.embed_provider,
+            model=args.embed_model,
+            datasets=args.datasets,
+            chunk_size=args.chunk_size,
+            force=args.force,
+            record_measurements=bool(measurement_path), measurement_stream=events,
+        )
+    if measurement_path:
+        measurement_path.write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     print(json.dumps(summary))
 
 

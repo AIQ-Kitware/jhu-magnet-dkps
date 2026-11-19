@@ -8,6 +8,7 @@ Only the evaluator uses the target's full benchmark score.
 import argparse
 import contextlib
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +55,7 @@ def predict(
     diagnostics=None,
 ):
     """Return DKPS, sample-mean, and raw predictions without full target scores."""
+    started = (time.perf_counter(), time.process_time()) if diagnostics is not None else None
     from dkps.dkps import DataKernelPerspectiveSpace
     from sklearn.linear_model import LinearRegression
 
@@ -84,7 +86,11 @@ def predict(
         sample_mean = float(np.mean(target_query_scores))
         prediction = alpha * sample_mean + (1 - alpha) * raw_prediction
     if diagnostics is not None:
-        diagnostics.update(stages=stages, unclipped_prediction=unclipped)
+        diagnostics.update(stages=stages, unclipped_prediction=unclipped,
+                           elapsed={"wall_seconds": time.perf_counter() - started[0],
+                                    "process_cpu_seconds": time.process_time() - started[1]},
+                           reference_count=len(references),
+                           selected_embedding_bytes=sum(a.nbytes for a in selected.values()))
     
     return prediction, sample_mean, raw_prediction
 
@@ -578,6 +584,7 @@ def main(argv=None):
         trial_file=trial_path.name,
     )
     if args.record_measurements:
+        payload["protocol"]["trial_count"] = payload["result"]["metrics"]["dkps_fits"]
         payload["protocol"]["measurement_files"] = {
             "trials": {"path": trial_path.name, "sha256": file_hash(trial_path)},
             "batches": {"path": batch_path.name, "sha256": file_hash(batch_path)},

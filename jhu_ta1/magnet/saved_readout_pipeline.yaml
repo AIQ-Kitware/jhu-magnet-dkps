@@ -1,0 +1,9 @@
+__doc__: Read saved benchmark predictions and measurements without acquisition or refitting.
+nodes:
+  impact_readout:
+    class: magnet.process_node.MagnetProcessNode
+    executable: 'python -m jhu_ta1.magnet.impact_readout'
+    in_paths: [source_fpath, precompute_fpath]
+    out_paths: {out_fpath: impact_readout.json}
+    primary_out_key: out_fpath
+    algo_params: {tolerance: 0.05, required_fraction: 0.95, readout_version: 1, recover_request_times: 0}

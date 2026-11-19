@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import tempfile
 import unittest
@@ -54,6 +55,24 @@ def make_panel(dataset, *, models=4, items=3, tag="a"):
 
 
 class PrecomputeTests(unittest.TestCase):
+    def test_preparation_timings_preserve_chunk_reuse_and_embeddings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            panel = make_panel('math:subject=a')
+            events, embedder = io.StringIO(), FakeEmbedder()
+            result = self.run_precompute(tmp, {panel.dataset: panel}, embedder,
+                                         record_measurements=True, measurement_stream=events)
+            measurements = result['measurements']
+            self.assertEqual(measurements['embed_function_calls'], 3)
+            self.assertEqual(len(events.getvalue().splitlines()), 3)
+            self.assertGreaterEqual(measurements['elapsed_wall_seconds'], 0)
+            fresh = FakeEmbedder()
+            reused = self.run_precompute(tmp, {panel.dataset: panel}, fresh,
+                                         record_measurements=True, force=True)
+            self.assertEqual(fresh.calls, [])
+            self.assertEqual(reused['measurements']['embed_function_calls'], 0)
+            self.assertEqual(reused['measurements']['reused_chunks'], 3)
+            CachedResponseEmbeddings(tmp, PROVIDER, DEFAULT_MODEL).validate([panel])
+
     def run_precompute(self, cache, panels, embedder, **kwargs):
         manifest = {
             "datasets": [{"dataset": p, "metric": "accuracy"} for p in panels]

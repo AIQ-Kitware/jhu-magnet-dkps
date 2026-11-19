@@ -14,7 +14,7 @@ from jhu_ta1.magnet._helm_pair_data import file_hash
 
 @contextlib.contextmanager
 def measure(stages, name):
-    """Record exclusive stage wall/process CPU time when a mapping is supplied."""
+    """Record a stage's wall/process CPU span when a mapping is supplied."""
     if stages is None:
         yield
         return

@@ -51,6 +51,23 @@ class RunnerTests(unittest.TestCase):
 
 @unittest.skipUnless(importlib.util.find_spec("magnet"), "MAGNET runtime not installed")
 class ContainerIntegrationTests(unittest.TestCase):
+    def test_measurement_branch_preserves_existing_node_ids_and_commands(self):
+        import copy
+        from kwdagger.yaml_pipeline import load_yaml_pipeline
+
+        root = Path(__file__).resolve().parents[1]
+        spec = yaml.safe_load((root / 'jhu_ta1/magnet/pair_coverage_pipeline.yaml').read_text())
+        baseline = copy.deepcopy(spec)
+        baseline['nodes'].pop('impact_readout')
+        baseline['edges'] = [edge for edge in baseline['edges'] if 'impact_readout' not in edge]
+        config = [{'pair_coverage.dataset_manifest': '/data/manifest.json'}]
+        old = load_yaml_pipeline(baseline).compile_configurations(config, root_dpath='/cache')
+        expanded = load_yaml_pipeline(spec).compile_configurations(config, root_dpath='/cache')
+        for identity, node in old.nodes.items():
+            other = expanded.nodes[identity]
+            self.assertEqual(node.final_node_dpath, other.final_node_dpath)
+            self.assertEqual(node.final_command(), other.final_command())
+
     def test_pair_coverage_card_passes_real_magnet_schema(self):
         from magnet.schema import NewEvaluationRecipeSchema
 
@@ -65,11 +82,12 @@ class ContainerIntegrationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         pipeline_path = root / "jhu_ta1/magnet/pair_coverage_pipeline.yaml"
         pipeline = load_yaml_pipeline(pipeline_path)
-        self.assertEqual(set(pipeline.node_dict), {"materialize_lite", "pair_coverage"})
+        self.assertEqual(set(pipeline.node_dict), {"materialize_lite", "pair_coverage", "impact_readout"})
         for node in pipeline.node_dict.values():
             self.assertIs(type(node), MagnetProcessNode)
         evaluator = pipeline.node_dict["pair_coverage"]
         self.assertTrue(evaluator.inputs["helm_suite_path"].pred)
+        self.assertTrue(pipeline.node_dict['impact_readout'].inputs['source_fpath'].pred)
 
         # Both routes share estimator/input/output settings. Their historical
         # defaults differ in audit replication effort and execution identifier.

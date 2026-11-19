@@ -428,6 +428,8 @@ class LivePairTests(unittest.TestCase):
                 self.assertEqual(by_batch[new["batch_id"]]["query_ids"], new["query_ids"])
                 self.assertEqual(new["raw_prediction"],
                                  np.clip(new["diagnostics"]["unclipped_prediction"], 0, 1))
+                self.assertGreaterEqual(new['diagnostics']['elapsed']['wall_seconds'], 0)
+                self.assertEqual(new['diagnostics']['reference_count'], len(new['reference_models']))
             self.assertEqual(len(trials), 12)
             self.assertEqual(len(batch_rows), 8)  # shared across unequal target rosters
             report = measured["measurements"]

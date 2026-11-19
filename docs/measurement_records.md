@@ -1,7 +1,8 @@
 # Experimental replay measurement records
 
 Working branch: `experiment/measurement-records`. Base: `839a99f`, the
-implementation recorded by the expanded November evaluation. The preceding
+implementation recorded by the expanded November evaluation, with native
+measurement readout and preparation timings added November 18. The preceding
 `8b81ed2` fixes the card's coverage symbol declaration. Both commits were
 recovered from a shared producer checkout; they were absent from fetched refs.
 
@@ -30,13 +31,45 @@ Full scores include audit-only target truth. Prediction still receives only
 the selected target grades and eligible reference scores. Trial reference IDs
 determine which full scores a replayed control may use.
 
-`result.metrics` exposes scalar replay times and row counts to MAGNET. They
-appear in serialized `evidence`, separate from claim-consumed symbols. Detailed
-measurements remain in the primary artifact; `protocol.measurement_files`
-links and hashes both JSONL files. Include those files with the primary artifact
-when exporting an experimental result. Flushes occur at batch boundaries so
-completed trial batches remain available after interruption; an incomplete
-stream is not a completed evaluation.
+The pipeline adds an independent CPU `impact_readout` node;
+`kwdagger.readout_nodes` publishes its measurements in `evaluation.json`.
+Eight symbols have the prefix `metrics.impact_readout.`:
+`quality_summary`, `quality_by_model_fpath`, `precision_frontier_fpath`,
+`stage_timings`, `fit_timings`, `trial_times_fpath`, `replay_scope` and
+`request_times_fpath`. Detailed quality, precision-budget and timing tables
+are file-backed JSONL. Native exports with `supporting=terminal` include them.
+The submitted claim and estimator remain unchanged. Saved-readout recipes
+can omit a claim; new reports lead with measurements.
+
+```bash
+magnet results symbols RECORD
+magnet results table RECORD --node=impact_readout \
+  --expand=metrics.impact_readout.fit_timings
+magnet results table RECORD --node=impact_readout \
+  --expand=metrics.impact_readout.quality_by_model_fpath \
+  --where='{query_budget: 8}' --group_by=dataset,method --aggregate='{mae: mean}'
+```
+
+`saved_readout_pipeline.yaml` accepts an existing `pair_coverage.json` as
+`impact_readout.source_fpath`, with no materialization, embedding or fitting
+nodes. Fresh and saved paths publish the same symbols. Readout tolerance
+and required observed fraction default to 0.05 native score units and 0.95.
+Five accuracy points and five normalized BLEU points are different scientific
+requirements; select datasets/metrics explicitly.
+
+Per-target quality includes raw DKPS, the submitted blend and sample mean:
+signed bias, MAE, tails and observed within-tolerance rates. Sources with
+retained eligible reference scores also support the same-weight sample/
+reference-mean control on identical draws. Older outputs without that bank
+do not invent it. Wilson intervals assume independent query draws conditional
+on one fixed target; they do not establish transfer reliability. The precision
+frontier selects minimum tested budgets at the observed-fraction criterion,
+retaining null ratios/status when either method does not reach it. It does
+not interpolate budgets or label query ratios compute savings.
+
+`protocol.measurement_files` still links/hashes trial and batch streams.
+Flushes preserve completed batches after interruption; readouts retain
+observed/expected trial counts.
 
 ## Measurement boundaries
 
@@ -53,24 +86,49 @@ stream is not a completed evaluation.
   newly encoded rows or API calls. Array bytes describe returned arrays, not
   peak process memory. Exported-cache mmap hits/misses include validation;
   chunk storage bytes and mmap counts do not measure physical disk reads.
-- Full-bank acquisition, original answer generation/grading and embedding
-  precomputation costs remain unknown. This evaluator reads those inputs.
-  It does not reconstruct their costs from response lengths or cache hits.
+- Full-bank acquisition, original generation/grading and embedding preparation
+  are not measured by the replay evaluator. The optional observations below
+  supply separate evidence; absent costs stay unknown.
 - Audit runtime includes every budget and replicate. A single target estimate
   has a different cost boundary; shared representation work must be allocated
   explicitly when estimating repeated-use cost.
 
-## Next additions
+Predictor invocation timing includes imports/setup, geometry, regression and
+blending, excluding shared representation. First calls may include warmup.
+Audit elapsed time also includes loading, recording and loop overhead; adding
+invocation totals to their component spans would double-count work.
 
-1. Reduce retained trials into raw-DKPS/blend/sample error curves, signed bias,
-   error tails and within-tolerance fractions by dataset, target and budget.
-   Preserve benchmark-specific score units and distinguish observed fractions
-   from confidence guarantees.
-2. Replay `0.8*sample_mean + 0.2*mean(eligible_reference_full_scores)` on identical
-   draws. This isolates inexpensive borrowing from the reference bank. Tuning
-   that weight requires separate calibration targets.
-3. Instrument embedding precomputation and generation/grading acquisition.
-   Then compare setup plus marginal cost at a declared precision target,
-   retaining “not reached” when tested budgets are insufficient.
+## Representation preparation
+
+Add `--measurement_fpath=/path/preparation.json` to the existing
+`python -m jhu_ta1.magnet.precompute_embeddings` command to record stage times,
+requested rows, logical bytes and chunk reuse. A sibling `.chunks.jsonl`
+flushes completed chunks. Encoder initialization, embedding-function calls,
+chunk opening/hashing/writing and panel/index work are separate. The helper
+may have its own cache: a function call is not proof of new device computation.
+Existing chunks are reused, including with `--force`; instrumentation changes
+neither chunk names nor index schema. Pass the JSON to
+`impact_readout.precompute_fpath` to publish preparation stages.
+
+## Original request observations
+
+Set `impact_readout.recover_request_times: 1` to recover HELM request metadata
+for declared targets. `request_times_fpath` retains reported durations, cache/
+status flags, timestamps and source hashes. Missing files are counted in
+`request_source_coverage`; missing/invalid durations remain null. This does not
+generate requests or measure judge/grading work. Rows describe source runs,
+including split, train-trial and perturbation flags; they are not automatically
+restricted to the aligned scoring pool. Filter/join item IDs before matched
+cost comparisons. Cached durations are historical reported facts, not free
+generation or fresh execution. Summed durations may overlap and are not job
+elapsed time or GPU-active time.
+
+## Remaining operational evidence
+
+Measure generation/grading where original metadata is absent, and compare
+setup plus marginal cost at a declared precision target. Retain “not reached”
+when tested budgets are insufficient. Larger-budget, matched-judge and
+deployment studies are separate workloads. No savings factor or monetary
+projection is inferred from replay wall time.
 
 None of these proposed analyses changes the published historical verdict.
