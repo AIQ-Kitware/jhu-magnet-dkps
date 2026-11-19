@@ -14,6 +14,21 @@ from jhu_ta1.magnet._helm_pair_data import file_hash
 METHODS = {'sample_mean': 'sample_score', 'submitted_blend': 'prediction', 'raw_dkps': 'raw_prediction'}
 
 
+def paired_error_summary(differences, key):
+    """Paired bootstrap over query draws for one fixed target, not model transfer."""
+    values = np.asarray(differences, dtype=float)
+    seed = int.from_bytes(hashlib.sha256(json.dumps(key).encode()).digest()[:8], 'big')
+    rng = np.random.default_rng(seed)
+    means = values[rng.integers(0, len(values), size=(2000, len(values)))].mean(axis=1)
+    return {'n_paired_draws': len(values), 'mean_abs_error_difference': float(values.mean()),
+            'paired_bootstrap_lower': float(np.quantile(means, .025)),
+            'paired_bootstrap_upper': float(np.quantile(means, .975)),
+            'fraction_lower_abs_error': float((values < 0).mean()),
+            'fraction_equal_abs_error': float((values == 0).mean()),
+            'bootstrap_replicates': 2000, 'bootstrap_seed': seed,
+            'uncertainty_scope': 'paired query draws conditional on one fixed target and pool'}
+
+
 def wilson(successes, count):
     """95% interval over independently sampled query draws for one fixed target."""
     z = NormalDist().inv_cdf(.975)
@@ -108,7 +123,8 @@ def readout(source_fpath, out_fpath, *, tolerance=.05, required_fraction=.95, pr
     source_info = {s['dataset']: s for s in protocol.get('sources', [])}
     trial_path = _resolve(source_path, protocol.get('trial_file', source_path.with_suffix('.trials.jsonl').name))
     output.parent.mkdir(parents=True, exist_ok=True)
-    groups, timings = defaultdict(list), defaultdict(list)
+    groups, timings, paired = defaultdict(list), defaultdict(list), defaultdict(list)
+    truths, reference_means, reference_counts = {}, defaultdict(list), defaultdict(list)
     seen, n_trials = set(), 0
     hashes = {str(source_path): file_hash(source_path)}
     batch_path = _resolve(source_path, protocol.get('measurement_files', {}).get('batches', {}).get(
@@ -133,12 +149,24 @@ def readout(source_fpath, out_fpath, *, tolerance=.05, required_fraction=.95, pr
             seen.add(key)
             n_trials += 1
             predictions = {method: row[field] for method, field in METHODS.items() if field in row}
+            target_key = row['dataset'], row['model']
+            if target_key in truths and truths[target_key] != row['truth']:
+                raise ValueError('Target truth changed between query draws')
+            truths[target_key] = row['truth']
             bank = source_info.get(row['dataset'], {}).get('full_scores')
             if bank is not None and row.get('reference_models'):
                 # Same-query control, with the submitted blend weight and eligible bank.
                 alpha = source['result']['metrics']['alpha']
-                predictions['reference_mean_blend'] = alpha * row['sample_score'] + (1 - alpha) * float(
-                    np.mean([bank[m] for m in row['reference_models']]))
+                reference_mean = float(np.mean([bank[m] for m in row['reference_models']]))
+                predictions['reference_mean_blend'] = alpha * row['sample_score'] + (1 - alpha) * reference_mean
+                reference_means[target_key].append(reference_mean)
+                reference_counts[target_key].append(len(row['reference_models']))
+            for comparator in ('sample_mean', 'reference_mean_blend'):
+                if comparator in predictions:
+                    for method in predictions:
+                        if method != comparator:
+                            paired[row['dataset'], row['model'], row['n_eval'], method, comparator].append(
+                                abs(predictions[method] - row['truth']) - abs(predictions[comparator] - row['truth']))
             for method, prediction in predictions.items():
                 signed = float(prediction - row['truth'])
                 if not math.isfinite(signed):
@@ -172,12 +200,39 @@ def readout(source_fpath, out_fpath, *, tolerance=.05, required_fraction=.95, pr
         errors = abs(signed)
         successes = int((errors <= tolerance).sum())
         lower, upper = wilson(successes, len(errors))
+        predictions = signed + truths[dataset, model]
         quality.append({'dataset': dataset, 'model': model, 'query_budget': budget, 'method': method,
                         'metric': source_info.get(dataset, {}).get('metric', 'unknown'),
                         'n_draws': len(errors), 'mae': float(errors.mean()), 'signed_bias': float(signed.mean()),
                         'error_q95': float(np.quantile(errors, .95)), 'tolerance': tolerance,
                         'fraction_within_tolerance': successes / len(errors),
-                        'within_wilson_lower': lower, 'within_wilson_upper': upper})
+                        'within_wilson_lower': lower, 'within_wilson_upper': upper,
+                        'prediction_mean': float(predictions.mean()),
+                        'prediction_std': float(predictions.std()),
+                        'prediction_min': float(predictions.min()), 'prediction_max': float(predictions.max()),
+                        'boundary_prediction_fraction': float(((predictions <= 0) | (predictions >= 1)).mean())})
+    paired_path = output.with_suffix('.paired.jsonl')
+    with paired_path.open('w') as stream:
+        for key, differences in sorted(paired.items()):
+            dataset, model, budget, method, comparator = key
+            row = {'dataset': dataset, 'model': model, 'query_budget': budget,
+                   'method': method, 'comparator': comparator, **paired_error_summary(differences, key)}
+            stream.write(json.dumps(row, allow_nan=False) + '\n')
+    profiles = []
+    for (dataset, model), truth in sorted(truths.items()):
+        means = reference_means[dataset, model]
+        counts = reference_counts[dataset, model]
+        profiles.append({'dataset': dataset, 'model': model, 'full_score': truth,
+                         'aligned_pool_size': source_info.get(dataset, {}).get('pool_size'),
+                         'reference_score_mean': float(np.mean(means)) if means else None,
+                         'reference_score_mean_min': min(means) if means else None,
+                         'reference_score_mean_max': max(means) if means else None,
+                         'reference_only_mae': float(np.mean(np.abs(np.asarray(means) - truth))) if means else None,
+                         'reference_only_fraction_within_tolerance': float((np.abs(np.asarray(means) - truth) <= tolerance).mean()) if means else None,
+                         'reference_only_target_queries': 0 if means else None,
+                         'reference_count_min': min(counts) if counts else None,
+                         'reference_count_max': max(counts) if counts else None,
+                         'scope': 'saved finite-pool truth for evaluation; eligible reference scores only for controls'})
     quality_path, frontier_path = output.with_suffix('.quality.jsonl'), output.with_suffix('.frontier.jsonl')
     for path, rows in [(quality_path, quality), (frontier_path, precision_frontier(quality, required_fraction))]:
         with path.open('w') as stream:
@@ -215,6 +270,7 @@ def readout(source_fpath, out_fpath, *, tolerance=.05, required_fraction=.95, pr
                    for (d, b), values in sorted(timings.items())]
     result = {'result': {'metrics': {
         'quality_summary': summaries, 'quality_by_model_fpath': str(quality_path),
+        'paired_comparisons_fpath': str(paired_path), 'target_profiles': profiles,
         'precision_frontier_fpath': str(frontier_path), 'trial_times_fpath': str(timing_path),
         'request_times_fpath': str(request_path),
         'stage_timings': stages, 'fit_timings': fit_summary,
@@ -226,6 +282,7 @@ def readout(source_fpath, out_fpath, *, tolerance=.05, required_fraction=.95, pr
         'source_sha256': hashes, 'request_source_coverage': request_coverage,
         'interpretation': {'quality': 'Per-target repeated-query estimates; Wilson intervals assume independent query draws for that fixed target. They do not bound transfer to new models.',
                            'frontier': 'Minimum tested budgets at an observed precision criterion, not a confidence guarantee, query interpolation or dollar/compute savings.',
+                           'paired': 'Negative error differences favor the method. Bootstrap intervals condition on a fixed target/pool, are exploratory and unadjusted for multiple comparisons; they do not bound transfer across models.',
                            'cost': 'Replay audit and individual fit times exclude original generation/grading. Shared batch time must be counted once, not once per fit.'}}
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + '\n')
     return result
@@ -237,7 +294,7 @@ class ImpactReadoutCLI(kwconf.Config):
     recover_request_times = kwconf.Value(0, tags=['algo_param'])
     tolerance = kwconf.Value(.05, tags=['algo_param'])
     required_fraction = kwconf.Value(.95, tags=['algo_param'])
-    readout_version = kwconf.Value(1, tags=['algo_param'])
+    readout_version = kwconf.Value(3, tags=['algo_param'])
     out_fpath = kwconf.Value('impact_readout.json', tags=['out_path', 'primary'])
 
     @classmethod

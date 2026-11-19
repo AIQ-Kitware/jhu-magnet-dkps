@@ -33,13 +33,29 @@ determine which full scores a replayed control may use.
 
 The pipeline adds an independent CPU `impact_readout` node;
 `kwdagger.readout_nodes` publishes its measurements in `evaluation.json`.
-Eight symbols have the prefix `metrics.impact_readout.`:
+Ten symbols have the prefix `metrics.impact_readout.`:
 `quality_summary`, `quality_by_model_fpath`, `precision_frontier_fpath`,
 `stage_timings`, `fit_timings`, `trial_times_fpath`, `replay_scope` and
-`request_times_fpath`. Detailed quality, precision-budget and timing tables
+`request_times_fpath`, `paired_comparisons_fpath` and `target_profiles`.
+Detailed quality, precision-budget, paired-error and timing tables
 are file-backed JSONL. Native exports with `supporting=terminal` include them.
 The submitted claim and estimator remain unchanged. Saved-readout recipes
 can omit a claim; new reports lead with measurements.
+
+Readout version 2 adds paired error differences against sample mean and the
+same-weight reference-mean blend. Negative differences favor the method.
+The 2,000-draw percentile bootstrap resamples differences from identical query
+draws for one fixed target/pool, with a recorded deterministic seed. These are
+exploratory intervals, unadjusted for multiple comparisons; common queries and
+related models prevent treating all target rows as independent replications.
+`target_profiles` exposes full target scores and eligible reference-bank means.
+Quality rows also retain prediction ranges, variation and boundary fractions.
+Version 3 reports the eligible bank mean's error and within-tolerance fraction
+using **zero target queries**, alongside its score. This control distinguishes
+raw prediction gains from proximity to a reusable bank mean. Bank preparation
+is still paid, and random reference-bank selection can contribute variability.
+These additions recompute only the CPU readout, leaving estimator/acquisition
+identities unchanged. Missing historical reference scores remain unavailable.
 
 ```bash
 magnet results symbols RECORD

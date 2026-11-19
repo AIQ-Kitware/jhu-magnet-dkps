@@ -44,7 +44,7 @@ nodes:
     in_paths: [source_fpath, precompute_fpath]
     out_paths: {out_fpath: impact_readout.json}
     primary_out_key: out_fpath
-    algo_params: {tolerance: 0.05, required_fraction: 0.95, readout_version: 1, recover_request_times: 0}
+    algo_params: {tolerance: 0.05, required_fraction: 0.95, readout_version: 3, recover_request_times: 0}
 
 edges:
   - materialize_lite.suite_dpath -> pair_coverage.helm_suite_path

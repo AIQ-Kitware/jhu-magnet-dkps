@@ -119,6 +119,36 @@ symbols:
         method: {display_name: Estimator}
         status: {display_name: Tested-range status}
         query_ratio: {display_name: Sampling / method query budget, unit: '1'}
+  metrics.impact_readout.paired_comparisons_fpath:
+    metadata:
+      display_name: Paired absolute error differences
+      display: false
+      format: jsonl
+      description: Negative differences favor the method. Exploratory percentile bootstrap intervals resample paired query draws for one fixed target and pool; they do not cover model transfer or multiple comparisons.
+      columns:
+        dataset: {display_name: Dataset}
+        model: {display_name: Target}
+        query_budget: {display_name: Target queries, unit: queries}
+        method: {display_name: Estimator}
+        comparator: {display_name: Comparator}
+        n_paired_draws: {display_name: Paired query draws, unit: draws}
+        mean_abs_error_difference: {display_name: Method minus comparator MAE, unit: score}
+        paired_bootstrap_lower: {display_name: Bootstrap lower percentile, unit: score}
+        paired_bootstrap_upper: {display_name: Bootstrap upper percentile, unit: score}
+  metrics.impact_readout.target_profiles:
+    metadata:
+      display_name: Target and reference score profiles
+      display: true
+      description: Saved aligned-pool target truth and eligible reference-bank means. Target truth is evaluator evidence and is not an input to the predictor.
+      columns:
+        dataset: {display_name: Dataset}
+        model: {display_name: Target}
+        full_score: {display_name: Full-pool target score, unit: score}
+        aligned_pool_size: {display_name: Aligned items, unit: items}
+        reference_score_mean: {display_name: Eligible bank mean score, unit: score}
+        reference_only_mae: {display_name: Zero-query reference mean MAE, unit: score}
+        reference_only_fraction_within_tolerance: {display_name: Zero-query bank mean within-tolerance fraction, unit: '1'}
+        reference_only_target_queries: {display_name: Target queries needed by bank mean, unit: queries}
   metrics.impact_readout.stage_timings:
     metadata:
       display_name: Replay and representation preparation timings

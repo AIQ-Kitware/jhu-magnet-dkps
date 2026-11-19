@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from jhu_ta1.magnet.impact_readout import readout
+from jhu_ta1.magnet.impact_readout import paired_error_summary, readout
 
 
 def saved_predictions(folder, *, timed=False):
@@ -67,6 +67,56 @@ def test_duplicate_draws_cannot_inflate_precision(tmp_path):
     trials.write_text(trials.read_text() * 2)
     with pytest.raises(ValueError, match='Duplicate'):
         readout(source, tmp_path / 'readout.json')
+
+
+def test_paired_differences_use_the_same_draw_and_preserve_missing_bank(tmp_path):
+    source = saved_predictions(tmp_path)
+    result = readout(source, tmp_path / 'readout.json')
+    metrics = result['result']['metrics']
+    paired = [json.loads(line) for line in Path(metrics['paired_comparisons_fpath']).read_text().splitlines()]
+    row = next(r for r in paired if r['query_budget'] == 1 and r['method'] == 'raw_dkps'
+               and r['comparator'] == 'sample_mean')
+    assert row['mean_abs_error_difference'] == pytest.approx(-.29)
+    assert row['paired_bootstrap_upper'] < 0 and row['n_paired_draws'] == 2
+    assert metrics['target_profiles'][0]['full_score'] == .5
+    assert metrics['target_profiles'][0]['reference_score_mean'] == .6
+    assert metrics['target_profiles'][0]['reference_only_mae'] == pytest.approx(.1)
+    assert metrics['target_profiles'][0]['reference_only_fraction_within_tolerance'] == 0
+    assert metrics['target_profiles'][0]['reference_only_target_queries'] == 0
+    primary = json.loads(source.read_text())
+    del primary['protocol']['sources'][0]['full_scores']
+    source.write_text(json.dumps(primary))
+    missing = readout(source, tmp_path / 'missing.json')['result']['metrics']
+    assert missing['target_profiles'][0]['reference_score_mean'] is None
+    assert 'reference_mean_blend' not in Path(missing['paired_comparisons_fpath']).read_text()
+
+
+def test_paired_bootstrap_retains_correlation_and_is_reproducible():
+    # Large individual errors can cancel in paired differences; do not resample
+    # the two estimators independently or report model-transfer uncertainty.
+    result = paired_error_summary([-.01] * 64, ('dataset', 'target', 8, 'method', 'control'))
+    assert result == paired_error_summary([-.01] * 64, ('dataset', 'target', 8, 'method', 'control'))
+    assert result['paired_bootstrap_lower'] == pytest.approx(-.01)
+    assert result['paired_bootstrap_upper'] == pytest.approx(-.01)
+
+
+def test_readout_revision_keeps_expensive_fit_identity(tmp_path):
+    from kwdagger.pipeline import coerce_pipeline
+    package = Path(__file__).resolve().parents[1] / 'jhu_ta1/magnet'
+    current = yaml.safe_load((package / 'pair_coverage_supplied_pipeline.yaml').read_text())
+    assert current['nodes']['impact_readout']['algo_params']['readout_version'] == 3
+    old = yaml.safe_load(yaml.safe_dump(current))
+    old['nodes']['impact_readout']['algo_params']['readout_version'] = 1
+    pipelines = []
+    for name, spec in [('old', old), ('new', current)]:
+        path = tmp_path / f'{name}.yaml'
+        path.write_text(yaml.safe_dump(spec))
+        pipeline = coerce_pipeline(str(path))
+        pipeline.configure({'pair_coverage.helm_suite_path': '/saved-suite',
+                            'pair_coverage.dataset_manifest': '/selected-manifest.json'}, root_dpath=tmp_path / 'dag')
+        pipelines.append(pipeline)
+    assert pipelines[0].node_dict['pair_coverage'].process_id == pipelines[1].node_dict['pair_coverage'].process_id
+    assert pipelines[0].node_dict['impact_readout'].process_id != pipelines[1].node_dict['impact_readout'].process_id
 
 
 def test_original_request_times_retain_cache_flags_and_missing_values(tmp_path):
